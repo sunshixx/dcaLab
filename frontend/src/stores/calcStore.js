@@ -105,8 +105,11 @@ function cloneTemplate() {
 export const useCalcStore = defineStore('calc', {
   state: () => ({
     monthly_amount: 3000,
+    contribution_frequency: 'monthly',
+    daily_amount: 300,
     years: 20,
     selected: ['sp500', 'dividend_lowvol'],
+    catalog: TEMPLATES.map((t) => ({ ...t, asset: JSON.parse(JSON.stringify(t.asset)) })),
     assetParams: cloneTemplate(),
     global: {
       exchange_rate: 7.0,
@@ -126,6 +129,8 @@ export const useCalcStore = defineStore('calc', {
       const assets = this.selected.map((k) => this.assetParams[k])
       return {
         monthly_amount: Number(this.monthly_amount),
+        contribution_frequency: this.contribution_frequency,
+        daily_amount: Number(this.daily_amount),
         years: Number(this.years),
         assets,
         global: {
@@ -153,6 +158,36 @@ export const useCalcStore = defineStore('calc', {
     async fetchPlans() {
       this.plans = await api('/plans')
     },
+    async fetchSimulationContext() {
+      const context = await api('/ledger/simulation-context')
+      if (!context.assets || context.assets.length === 0) return false
+      const base = JSON.parse(JSON.stringify(TEMPLATES[2].asset))
+      this.catalog = context.assets.map((item) => ({
+        key: item.code,
+        label: `${item.name}（${item.code}）`,
+        asset: {
+          ...base,
+          name: item.name,
+          currency: item.currency || 'CNY',
+          expected_return: item.expected_return,
+          initial_value: item.initial_value,
+          initial_cost: item.initial_cost,
+          initial_investment: item.initial_investment,
+          management_fee: item.management_fee ?? base.management_fee,
+          subscription_fee: item.subscription_fee ?? base.subscription_fee,
+          redemption_fee_tiers: item.redemption_fee_tiers?.length ? item.redemption_fee_tiers : base.redemption_fee_tiers,
+          buy_premium: item.buy_premium_rate || 0,
+          premium_months: item.buy_premium_rate > 0 ? 1 : 0,
+          weight: 1
+        },
+        market: item
+      }))
+      this.assetParams = Object.fromEntries(this.catalog.map((item) => [item.key, item.asset]))
+      this.selected = this.catalog.map((item) => item.key)
+      const usdAsset = context.assets.find((item) => item.currency === 'USD' && item.fx_rate > 0)
+      if (usdAsset) this.global.exchange_rate = usdAsset.fx_rate
+      return true
+    },
     async savePlan(name) {
       await api('/plans', { method: 'POST', body: { name, params: this.buildPayload() } })
       await this.fetchPlans()
@@ -165,6 +200,8 @@ export const useCalcStore = defineStore('calc', {
       const p = await api(`/plans/${id}`)
       const params = p.params
       this.monthly_amount = params.monthly_amount
+      this.contribution_frequency = params.contribution_frequency || 'monthly'
+      this.daily_amount = params.daily_amount || 300
       this.years = params.years
       // 按名称匹配回模板槽位，未匹配的并入第一个空槽
       const keys = TEMPLATES.map((t) => t.key)

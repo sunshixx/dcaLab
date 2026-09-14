@@ -13,30 +13,33 @@
 
 const TTL = { info: 5 * 60_000, estimate: 60_000, navs: 3600_000 }
 const cache = new Map() // key -> {at, value}
+const pending = new Map() // key -> in-flight request
 
-// SSRF 加固：所有外部传入的基金代码必须恰为 6 位数字，
-// URL 仅由校验后的字面量构造，杜绝代码注入任意 URL/路径。
-const CODE_RE = /^\d{6}$/
+// 只允许六位中国基金代码或短美股 ticker，URL 仅由校验后的字面量构造。
+const CODE_RE = /^(?:\d{6}|[A-Za-z]{1,8})$/
+const CN_CODE_RE = /^\d{6}$/
 function safeCode(code) {
   const c = String(code || '')
-  if (!CODE_RE.test(c)) throw new Error('非法基金代码')
-  return c
+  if (!CODE_RE.test(c)) throw new Error('非法基金代码或 ticker')
+  return CN_CODE_RE.test(c) ? c : c.toUpperCase()
 }
 
-function cached(key, ttl, fn) {
+function cached(key, ttl, fn, fresh = false) {
   const hit = cache.get(key)
-  if (hit && Date.now() - hit.at < ttl) return Promise.resolve(hit.value)
-  return fn().then(
-    (v) => {
-      cache.set(key, { at: Date.now(), value: v })
-      return v
-    },
-    (err) => {
-      // 失败缓存 30s，避免连环超时
-      cache.set(key, { at: Date.now() - ttl + 30_000, value: null })
-      return null
-    }
-  )
+  if (!fresh && hit && Date.now() - hit.at < ttl) return Promise.resolve(hit.value)
+  if (pending.has(key)) return pending.get(key)
+  const request = fn()
+    .then((value) => {
+      if (value != null) cache.set(key, { at: Date.now(), value })
+      return value != null ? value : hit?.value ?? null
+    })
+    .catch(() => {
+      // 刷新失败时保留上次成功值，避免页面在不同估值源之间跳变。
+      return hit ? hit.value : null
+    })
+    .finally(() => pending.delete(key))
+  pending.set(key, request)
+  return request
 }
 
 async function fetchWithTimeout(url, opts = {}, ms = 6000) {
@@ -53,8 +56,9 @@ async function fetchWithTimeout(url, opts = {}, ms = 6000) {
 }
 
 /** Provider A：基金信息 + 最新净值 */
-export async function fundInfo(rawCode) {
+export async function fundInfo(rawCode, { fresh = false } = {}) {
   const code = safeCode(rawCode)
+  if (!CN_CODE_RE.test(code)) return null
   return cached(`info:${code}`, TTL.info, async () => {
     const url = `https://fundsuggest.eastmoney.com/FundSearch/api/FundSearchAPI.ashx?m=1&key=${encodeURIComponent(code)}`
     const res = await fetchWithTimeout(url)
@@ -71,12 +75,13 @@ export async function fundInfo(rawCode) {
       nav_date: b.FSRQ || '',
       company: b.JJGS || ''
     }
-  })
+  }, fresh)
 }
 
 /** Provider B：历史净值（升序返回 {date, nav, acc}） */
 export async function navHistory(rawCode, { pageSize = 30, pageIndex = 1 } = {}) {
   const code = safeCode(rawCode)
+  if (!CN_CODE_RE.test(code)) return null
   return cached(`navs:${code}:${pageIndex}:${pageSize}`, TTL.navs, async () => {
     const url =
       `https://api.fund.eastmoney.com/f10/lsjz?fundCode=${encodeURIComponent(code)}` +
@@ -121,7 +126,7 @@ export async function navHistorySince(code, sinceDate) {
 }
 
 /** Provider C：场外基金盘中估值（尽力而为，失败返回 null） */
-export async function fundEstimate(rawCode) {
+export async function fundEstimate(rawCode, { fresh = false } = {}) {
   const code = safeCode(rawCode)
   return cached(`est:${code}`, TTL.estimate, async () => {
     const url = `https://fundgz.1234567.com.cn/js/${encodeURIComponent(code)}.js`
@@ -138,14 +143,16 @@ export async function fundEstimate(rawCode) {
       as_of: j.gztime || '',
       yesterday_nav: Number(j.dwjz)
     }
-  })
+  }, fresh)
 }
 
 /** Provider D：场内 ETF/LOF 现价（尽力而为，失败返回 null） */
-export async function etfQuote(rawCode) {
+export async function etfQuote(rawCode, { fresh = false } = {}) {
   const code = safeCode(rawCode)
+  if (!CN_CODE_RE.test(code)) return null
   return cached(`etf:${code}`, TTL.estimate, async () => {
-    for (const prefix of ['1', '0']) {
+    const prefixes = code.startsWith('6') ? ['1'] : ['0', '1']
+    for (const prefix of prefixes) {
       try {
         const url =
           `https://push2.eastmoney.com/api/qt/stock/get?secid=${prefix}.${encodeURIComponent(code)}` +
@@ -155,6 +162,7 @@ export async function etfQuote(rawCode) {
         const j = await res.json()
         const d = j && j.data
         if (!d || d.f43 === undefined || d.f43 === '-') continue
+        if (String(d.f57 || '').padStart(6, '0') !== code) continue
         return {
           code,
           name: d.f58,
@@ -168,7 +176,79 @@ export async function etfQuote(rawCode) {
       }
     }
     return null
-  })
+  }, fresh)
+}
+
+export async function etfHistoricalQuote(rawCode, date, { fresh = false } = {}) {
+  const code = safeCode(rawCode)
+  if (!CN_CODE_RE.test(code) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null
+  const market = code.startsWith('6') ? '1' : '0'
+  const begin = date.replaceAll('-', '')
+  return cached(`etf:${code}:${date}`, TTL.estimate, async () => {
+    const url =
+      `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${market}.${encodeURIComponent(code)}` +
+      `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60` +
+      `&klt=101&fqt=1&beg=${begin}&end=${begin}`
+    const res = await fetchWithTimeout(url)
+    if (!res.ok) throw new Error(`历史行情接口 HTTP ${res.status}`)
+    const data = await res.json()
+    const row = data.data?.klines?.find((line) => String(line).startsWith(date))
+    if (!row) return null
+    const fields = row.split(',')
+    const price = Number(fields[2])
+    if (!Number.isFinite(price) || price <= 0) return null
+    return { code, name: data.data.name || '', price, as_of: date }
+  }, fresh)
+}
+
+/** Provider E：美股 ETF 价格（Yahoo chart；NAV 由供应商返回时才使用） */
+export async function usQuote(rawTicker, { fresh = false, date = '' } = {}) {
+  const ticker = safeCode(rawTicker)
+  if (CN_CODE_RE.test(ticker)) return null
+  const today = new Date().toISOString().slice(0, 10)
+  const requestedDate = date && date !== today && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
+  return cached(`us:${ticker}:${requestedDate || 'live'}`, TTL.estimate, async () => {
+    const start = requestedDate ? Math.floor(Date.parse(`${requestedDate}T00:00:00Z`) / 1000) : 0
+    const end = requestedDate ? start + 86400 : 0
+    const query = requestedDate ? `period1=${start}&period2=${end}&interval=1d` : 'range=1d&interval=1m'
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?${query}`
+    const res = await fetchWithTimeout(url)
+    if (!res.ok) throw new Error(`美股行情接口 HTTP ${res.status}`)
+    const result = (await res.json()).chart?.result?.[0]
+    const meta = result?.meta
+    const closes = result?.indicators?.quote?.[0]?.close || []
+    const historicalClose = [...closes].reverse().find((value) => Number.isFinite(Number(value)))
+    const price = Number(requestedDate ? historicalClose : meta?.regularMarketPrice || meta?.previousClose)
+    if (!Number.isFinite(price) || price <= 0) return null
+    return {
+      code: ticker,
+      name: meta.longName || meta.shortName || ticker,
+      price,
+      nav: Number(meta.navPrice) > 0 ? Number(meta.navPrice) : null,
+      currency: meta.currency || 'USD',
+      change_pct: Number(meta.previousClose) > 0 ? price / Number(meta.previousClose) - 1 : null,
+      as_of: requestedDate || (meta.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : '')
+    }
+  }, fresh)
+}
+
+export async function usdcnyRate({ fresh = false, date = '' } = {}) {
+  const today = new Date().toISOString().slice(0, 10)
+  const requestedDate = date && date !== today && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''
+  return cached(`fx:USDCNY:${requestedDate || 'live'}`, TTL.estimate, async () => {
+    const start = requestedDate ? Math.floor(Date.parse(`${requestedDate}T00:00:00Z`) / 1000) : 0
+    const end = requestedDate ? start + 86400 : 0
+    const query = requestedDate ? `period1=${start}&period2=${end}&interval=1d` : 'range=1d&interval=1m'
+    const res = await fetchWithTimeout(`https://query1.finance.yahoo.com/v8/finance/chart/CNY=X?${query}`)
+    if (!res.ok) throw new Error(`汇率接口 HTTP ${res.status}`)
+    const result = (await res.json()).chart?.result?.[0]
+    const meta = result?.meta
+    const closes = result?.indicators?.quote?.[0]?.close || []
+    const historicalClose = [...closes].reverse().find((value) => Number.isFinite(Number(value)))
+    const rate = Number(requestedDate ? historicalClose : meta?.regularMarketPrice || meta?.previousClose)
+    if (!Number.isFinite(rate) || rate <= 0) return null
+    return rate
+  }, fresh)
 }
 
 function formatUnixSec(sec) {
@@ -192,20 +272,73 @@ export function selectValuation(info, estimate) {
 /** 组合查询：信息 + 最新单位净值估算（用于持仓估值）
  *  入口即归一化：parseInt 丢弃一切非数字内容，锚定正则确保恰为 6 位，
  *  后续所有 URL 仅由该字面量构造（防 SSRF：代码不可能携带路径/查询/协议成分）。 */
-export async function fundSnapshot(rawCode) {
+export async function fundSnapshot(rawCode, { fresh = false, date = '' } = {}) {
   const code = safeCode(rawCode)
-  const [info, est] = await Promise.all([
-    fundInfo(code).catch(() => null),
-    fundEstimate(code)
+  if (!CN_CODE_RE.test(code)) {
+    const quote = await usQuote(code, { fresh, date }).catch(() => null)
+    const fxRate = quote ? await usdcnyRate({ fresh, date }).catch(() => null) : null
+    return {
+      code,
+      found: !!quote,
+      info: quote ? { code, name: quote.name, type: 'US ETF', nav: quote.nav, nav_date: quote.as_of } : null,
+      market: 'US_ETF',
+      currency: 'USD',
+      fx_rate: fxRate,
+      quote_price: quote?.price ?? null,
+      nav: quote?.nav ?? null,
+      premium_rate: quote?.nav > 0 ? quote.price / quote.nav - 1 : null,
+      valuation_nav: quote?.price ?? null,
+      valuation_date: quote?.as_of || '',
+      valuation_source: quote ? '美股实时价格' : null
+    }
+  }
+  const today = new Date().toISOString().slice(0, 10)
+  if (date && date !== today && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    const [info, navs, historicalQuote] = await Promise.all([
+      fundInfo(code, { fresh }).catch(() => null),
+      navHistory(code, { pageSize: 30, pageIndex: 1 }).catch(() => []),
+      etfHistoricalQuote(code, date, { fresh }).catch(() => null)
+    ])
+    const navRow = (navs || []).find((row) => row.date <= date && row.nav > 0)
+    const validQuote = historicalQuote && info && sameInstrumentName(info.name, historicalQuote.name) ? historicalQuote : null
+    return {
+      code,
+      found: !!info,
+      info,
+      market: validQuote ? 'CN_ETF' : 'CN_FUND',
+      currency: 'CNY',
+      quote_price: validQuote?.price ?? null,
+      premium_rate: validQuote && navRow ? validQuote.price / navRow.nav - 1 : null,
+      valuation_nav: navRow?.nav ?? null,
+      valuation_date: navRow?.date || '',
+      valuation_source: navRow ? '历史净值' : null
+    }
+  }
+  const [info, est, quote] = await Promise.all([
+    fundInfo(code, { fresh }).catch(() => null),
+    fundEstimate(code, { fresh }),
+    etfQuote(code, { fresh })
   ])
+  const validQuote = quote && info && sameInstrumentName(info.name, quote.name) ? quote : null
   const valuation = selectValuation(info, est)
   return {
     code,
     found: !!info,
     info,
-    // 持仓按基金单位净值估值；场内成交价不能替代单位净值，尤其不能用于场外/QDII。
+    market: validQuote ? 'CN_ETF' : 'CN_FUND',
+    currency: 'CNY',
+    quote_price: validQuote?.price ?? null,
+    premium_rate: validQuote?.price > 0 && valuation?.nav > 0 ? validQuote.price / valuation.nav - 1 : null,
+    // 持仓按基金单位净值估值；场内成交价不能替代场外基金单位净值。
     valuation_nav: valuation ? valuation.nav : null,
     valuation_date: valuation ? valuation.date : '',
     valuation_source: valuation ? valuation.source : null
   }
+}
+
+function sameInstrumentName(fundName, quoteName) {
+  const normalize = (value) => String(value || '').replace(/[\s()（）-]/g, '').toLowerCase()
+  const fund = normalize(fundName)
+  const quote = normalize(quoteName)
+  return !!fund && !!quote && (fund.includes(quote) || quote.includes(fund))
 }

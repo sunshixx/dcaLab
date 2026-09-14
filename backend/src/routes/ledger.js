@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { sql } from '../models/db.js'
 import { fundSchema, transactionSchema, importCsvSchema } from '../models/schemas.js'
 import { computeHoldings, portfolioXirr, exportCsv, parseImportCsv, sharesForBuy } from '../services/bookkeeping.js'
-import { fundSnapshot, navHistorySince } from '../services/marketData.js'
+import { fundSnapshot, navHistorySince, usdcnyRate } from '../services/marketData.js'
 
 const r = Router()
 
@@ -63,31 +63,48 @@ function hasEnoughShares(fundCode, candidate) {
 
 // ── 基金 ──
 r.get('/funds', (_req, res) => {
-  res.json(sql.all('SELECT code, name, type, note, created_at FROM funds ORDER BY code'))
+  res.json(sql.all('SELECT code, name, type, note, market, currency, management_fee, custody_fee, subscription_fee, redemption_fee_tiers, created_at FROM funds ORDER BY code').map(parseFundProfile))
 })
 
 r.post('/funds', async (req, res) => {
   const parsed = fundSchema.safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: '参数校验失败', issues: parsed.error.issues })
-  const { code, name, type, note } = parsed.data
+  const parsedCode = parsed.data.code
+  const code = /^\d{6}$/.test(parsedCode) ? parsedCode : parsedCode.toUpperCase()
+  const { name, type, note, management_fee, custody_fee, subscription_fee, redemption_fee_tiers } = parsed.data
+  const existed = sql.get('SELECT code FROM funds WHERE code = ?', code)
   let finalName = name
   let finalType = type || ''
+  let market = /^\d{6}$/.test(code) ? 'CN_FUND' : 'US_ETF'
+  let currency = market === 'US_ETF' ? 'USD' : 'CNY'
+  const snap = await fundSnapshot(code).catch(() => null)
+  if (snap) {
+    market = snap.market || market
+    currency = snap.currency || currency
+  }
   if (!finalName) {
     // 未提供名称时自动查询
-    const snap = await fundSnapshot(code)
     if (!snap.found) return res.status(404).json({ error: '未查询到该基金代码，请确认后重试，或手动输入名称' })
     finalName = snap.info.name
     finalType = finalType || snap.info.type
+    market = snap.market || market
+    currency = snap.currency || currency
   }
   sql.run(
-    'INSERT INTO funds (code, name, type, note) VALUES (?, ?, ?, ?) ' +
-      'ON CONFLICT(code) DO UPDATE SET name = excluded.name, type = excluded.type, note = COALESCE(NULLIF(excluded.note, \'\'), funds.note)',
+    'INSERT INTO funds (code, name, type, note, market, currency, management_fee, custody_fee, subscription_fee, redemption_fee_tiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(code) DO UPDATE SET name = excluded.name, type = excluded.type, note = COALESCE(NULLIF(excluded.note, \'\'), funds.note), market = excluded.market, currency = excluded.currency, management_fee = excluded.management_fee, custody_fee = excluded.custody_fee, subscription_fee = excluded.subscription_fee, redemption_fee_tiers = excluded.redemption_fee_tiers',
     code,
     finalName,
     finalType,
-    note || ''
+    note || '',
+    market,
+    currency,
+    management_fee,
+    custody_fee,
+    subscription_fee,
+    JSON.stringify(redemption_fee_tiers)
   )
-  res.status(201).json({ code, name: finalName })
+  res.status(existed ? 200 : 201).json({ code, name: finalName, updated: !!existed })
 })
 
 r.delete('/funds/:code', async (req, res) => {
@@ -104,18 +121,31 @@ r.get('/transactions', async (req, res) => {
   res.json(await addAutomaticReinvestments(loadTxs(req.query.fund_code || null)))
 })
 
-r.post('/transactions', (req, res) => {
+r.post('/transactions', async (req, res) => {
   const parsed = transactionSchema.safeParse(req.body)
   if (!parsed.success) {
     return res.status(400).json({ error: '参数校验失败', issues: parsed.error.issues })
   }
   const t = parsed.data
-  const fund = sql.get('SELECT code FROM funds WHERE code = ?', t.fund_code)
+  const fund = sql.get('SELECT code, currency, redemption_fee_tiers FROM funds WHERE code = ?', t.fund_code)
   if (!fund) return res.status(400).json({ error: '请先添加该基金到记账本' })
+  t.currency = fund.currency || t.currency
+  if (t.currency === 'USD' && t.fx_rate <= 1) {
+    t.fx_rate = await usdcnyRate({ fresh: true }).catch(() => null)
+    if (!t.fx_rate) return res.status(503).json({ error: '实时美元汇率暂不可用，请稍后重试' })
+  }
+  if (t.price <= 0) t.price = t.nav
+  if ((t.type === 'buy' || t.type === 'dividend_reinvest') && t.fee <= 0) {
+    const profile = sql.get('SELECT subscription_fee FROM funds WHERE code = ?', t.fund_code)
+    t.fee = Math.round(t.amount * (profile?.subscription_fee || 0) * 100) / 100
+  }
+  if (t.type === 'sell' && t.fee <= 0) {
+    t.fee = calculateRedemptionFee(t.fund_code, t, parseTiers(fund.redemption_fee_tiers))
+  }
   // 买入金额是实际扣款，手续费已包含在内，份额按扣除手续费后的金额推算
-  if ((t.type === 'buy' || t.type === 'dividend_reinvest') && t.shares <= 0 && t.nav > 0) {
+  if ((t.type === 'buy' || t.type === 'dividend_reinvest') && t.shares <= 0 && t.price > 0) {
     if (t.amount < t.fee) return res.status(400).json({ error: '手续费不能高于实际扣款金额' })
-    t.shares = (t.amount - t.fee) / t.nav
+    t.shares = (t.amount - t.fee) / t.price
   }
   if (t.type === 'sell') {
     // 超卖校验：按交易日期重演，支持补录早于现有交易的历史卖出。
@@ -124,8 +154,8 @@ r.post('/transactions', (req, res) => {
     }
   }
   const ret = sql.run(
-    'INSERT INTO transactions (fund_code, date, type, amount, nav, shares, fee, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    t.fund_code, t.date, t.type, t.amount, t.nav, t.shares, t.fee, t.note
+    'INSERT INTO transactions (fund_code, date, type, amount, nav, price, shares, fee, currency, fx_rate, premium_rate, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    t.fund_code, t.date, t.type, t.amount, t.nav, t.price, t.shares, t.fee, t.currency, t.fx_rate, t.premium_rate, t.note
   )
   res.status(201).json({ id: Number(ret.lastInsertRowid), ...t })
 })
@@ -136,21 +166,71 @@ r.delete('/transactions/:id', (req, res) => {
   res.json({ ok: true })
 })
 
+// ── 模拟器上下文：当前持仓 + 最新估值 + 历史年化收益估计 ──
+r.get('/simulation-context', async (_req, res) => {
+  const txs = await addAutomaticReinvestments(loadTxs(null))
+  const holdings = computeHoldings(txs).filter((h) => h.shares > 0)
+  const funds = new Map(sql.all('SELECT code, name, management_fee, custody_fee, subscription_fee, redemption_fee_tiers FROM funds').map((f) => [f.code, f]))
+  const since = new Date()
+  since.setFullYear(since.getFullYear() - 3)
+  const sinceDate = since.toISOString().slice(0, 10)
+  const assets = await Promise.all(holdings.map(async (h) => {
+    const [snapshot, history] = await Promise.all([
+      fundSnapshot(h.fund_code, { fresh: true }),
+      navHistorySince(h.fund_code, sinceDate).catch(() => [])
+    ])
+    const first = history.find((row) => row.nav > 0)
+    const last = [...history].reverse().find((row) => row.nav > 0)
+    const days = first && last ? Math.max(1, (new Date(last.date) - new Date(first.date)) / 86400000) : 0
+    const annualReturn = first && last && days >= 180 ? Math.pow(last.nav / first.nav, 365 / days) - 1 : 0.07
+    const fxRate = snapshot.currency === 'USD' ? await usdcnyRate({ fresh: true }).catch(() => null) : 1
+    const nav = snapshot.valuation_nav > 0 ? snapshot.valuation_nav : h.avg_cost
+    return {
+      code: h.fund_code,
+      name: snapshot.info?.name || funds.get(h.fund_code)?.name || h.fund_code,
+      shares: h.shares,
+      latest_nav: nav,
+      nav_date: snapshot.valuation_date || '',
+      valuation_source: snapshot.valuation_source || '',
+      initial_value: Math.max(0, h.shares * nav),
+      initial_cost: Math.max(0, h.total_cost / (fxRate || 1)),
+      initial_investment: Math.max(0, h.total_cost),
+      expected_return: Math.max(-0.5, Math.min(0.5, annualReturn)),
+      management_fee: (funds.get(h.fund_code)?.management_fee || 0) + (funds.get(h.fund_code)?.custody_fee || 0),
+      subscription_fee: funds.get(h.fund_code)?.subscription_fee || 0,
+      redemption_fee_tiers: parseTiers(funds.get(h.fund_code)?.redemption_fee_tiers),
+      buy_premium_rate: h.buy_premium_rate ?? 0,
+      currency: snapshot.currency || 'CNY',
+      fx_rate: fxRate,
+      history_start: first?.date || '',
+      history_end: last?.date || ''
+    }
+  }))
+  res.json({ assets })
+})
+
 // ── 持仓（附加最新估值）──
-r.get('/holdings', async (_req, res) => {
+r.get('/holdings', async (req, res) => {
+  const fresh = req.query.refresh === '1'
   const txs = await addAutomaticReinvestments(loadTxs(null))
   const holdings = computeHoldings(txs)
   const enriched = await Promise.all(
     holdings.map(async (h) => {
-      const snap = await fundSnapshot(h.fund_code)
+      const snap = await fundSnapshot(h.fund_code, { fresh })
       const nav = snap.valuation_nav ?? 0
-      const value = nav > 0 ? h.shares * nav : 0
+      const marketPrice = snap.quote_price ?? nav
+      const fxRate = snap.currency === 'USD' ? (await usdcnyRate({ fresh }).catch(() => null)) || 7.1 : 1
+      const value = marketPrice > 0 ? h.shares * marketPrice * fxRate : 0
       return {
         ...h,
         fund_name: snap.info ? snap.info.name : '(未知基金)',
         latest_nav: nav,
+        market_price: snap.quote_price,
         nav_date: snap.valuation_date,
         valuation_source: snap.valuation_source,
+        nav_premium_rate: h.buy_premium_rate,
+        currency: snap.currency || 'CNY',
+        fx_rate: fxRate,
         nav_cost: round2(h.nav_cost),
         cash_cost: round2(h.total_cost),
         market_value: Math.round(value * 100) / 100,
@@ -163,14 +243,17 @@ r.get('/holdings', async (_req, res) => {
 })
 
 // ── 组合统计：投入/市值/XIRR/各基金小计 ──
-r.get('/stats', async (_req, res) => {
+r.get('/stats', async (req, res) => {
+  const fresh = req.query.refresh === '1'
   const txs = await addAutomaticReinvestments(loadTxs(null))
   const computed = computeHoldings(txs)
-  const snapShots = await Promise.all(computed.map((h) => fundSnapshot(h.fund_code)))
-  const currentValues = computed.map((h, i) => {
-    const nav = snapShots[i].valuation_nav ?? 0
-    return { code: h.fund_code, value: nav > 0 ? h.shares * nav : 0 }
-  })
+  const snapShots = await Promise.all(computed.map((h) => fundSnapshot(h.fund_code, { fresh })))
+  const currentValues = await Promise.all(computed.map(async (h, i) => {
+    const snap = snapShots[i]
+    const nav = snap.quote_price ?? snap.valuation_nav ?? 0
+    const fxRate = snap.currency === 'USD' ? await usdcnyRate({ fresh }).catch(() => null) : 1
+    return { code: h.fund_code, value: nav > 0 && fxRate ? h.shares * nav * fxRate : 0 }
+  }))
   const totalInvested = computed.reduce((s, h) => s + h.invested, 0)
   const totalContributed = computed.reduce((s, h) => s + h.contributed, 0)
   const totalValue = currentValues.reduce((s, c) => s + c.value, 0)
@@ -235,11 +318,12 @@ r.get('/series', async (_req, res) => {
     for (const h of holdings) {
       const hTxs = txSorted.filter((t) => t.fund_code === h.fund_code && t.date <= ds)
       for (const t of hTxs) {
-        if (t.type === 'buy') invested += t.amount
-        else if (t.type === 'dividend_reinvest') invested += t.amount
-        else if (t.type === 'sell') invested -= t.amount - t.fee
-        else if (t.type === 'dividend_cash') invested -= t.amount
-        else if (t.type === 'fee') invested += t.fee > 0 ? t.fee : t.amount
+        const amountCny = (amount) => amount * (t.currency === 'USD' ? t.fx_rate : 1)
+        if (t.type === 'buy') invested += amountCny(t.amount)
+        else if (t.type === 'dividend_reinvest') invested += amountCny(t.amount)
+        else if (t.type === 'sell') invested -= amountCny(t.amount - t.fee)
+        else if (t.type === 'dividend_cash') invested -= amountCny(t.amount)
+        else if (t.type === 'fee') invested += amountCny(t.fee > 0 ? t.fee : t.amount)
       }
       // 份额推演
       let shares = 0
@@ -297,7 +381,7 @@ r.post('/import.csv', async (req, res) => {
     }
     const rowTx = checked.data
     if ((rowTx.type === 'buy' || rowTx.type === 'dividend_reinvest') && rowTx.shares <= 0) {
-      rowTx.shares = (rowTx.amount - rowTx.fee) / rowTx.nav
+      rowTx.shares = (rowTx.amount - rowTx.fee) / (rowTx.price || rowTx.nav)
     }
     if (rowTx.type === 'sell' && !hasEnoughShares(rowTx.fund_code, { ...rowTx, id: Number.MAX_SAFE_INTEGER })) {
       errors.push(`基金 ${rowTx.fund_code} ${rowTx.date}：卖出份额超出当前持仓`)
@@ -307,11 +391,17 @@ r.post('/import.csv', async (req, res) => {
     if (!fund) {
       const snap = await fundSnapshot(rowTx.fund_code).catch(() => null)
       const name = snap && snap.info ? snap.info.name : rowTx.fund_code
-      sql.run('INSERT OR IGNORE INTO funds (code, name) VALUES (?, ?)', rowTx.fund_code, name)
+      sql.run(
+        'INSERT OR IGNORE INTO funds (code, name, market, currency) VALUES (?, ?, ?, ?)',
+        rowTx.fund_code,
+        name,
+        snap?.market || (/^\d{6}$/.test(rowTx.fund_code) ? 'CN_FUND' : 'US_ETF'),
+        rowTx.currency
+      )
     }
     const ret = sql.run(
-      'INSERT INTO transactions (fund_code, date, type, amount, nav, shares, fee, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      rowTx.fund_code, rowTx.date, rowTx.type, rowTx.amount, rowTx.nav, rowTx.shares, rowTx.fee, rowTx.note
+      'INSERT INTO transactions (fund_code, date, type, amount, nav, price, shares, fee, currency, fx_rate, premium_rate, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      rowTx.fund_code, rowTx.date, rowTx.type, rowTx.amount, rowTx.nav, rowTx.price, rowTx.shares, rowTx.fee, rowTx.currency, rowTx.fx_rate, rowTx.premium_rate, rowTx.note
     )
     inserted.push(Number(ret.lastInsertRowid))
   }
@@ -320,6 +410,48 @@ r.post('/import.csv', async (req, res) => {
 
 function round2(x) {
   return Math.round(x * 100) / 100
+}
+
+function parseTiers(raw) {
+  try {
+    const tiers = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw
+    return Array.isArray(tiers) ? tiers : []
+  } catch {
+    return []
+  }
+}
+
+function parseFundProfile(row) {
+  return { ...row, redemption_fee_tiers: parseTiers(row.redemption_fee_tiers) }
+}
+
+function calculateRedemptionFee(fundCode, sell, tiers) {
+  if (!tiers.length || sell.shares <= 0 || sell.amount <= 0) return 0
+  const lots = []
+  for (const tx of loadTxs(fundCode)) {
+    if (tx.type === 'buy' || tx.type === 'dividend_reinvest') lots.push({ date: tx.date, shares: sharesForBuy(tx) })
+    if (tx.type === 'sell') {
+      let remaining = tx.shares
+      for (const lot of lots) {
+        const used = Math.min(remaining, lot.shares)
+        lot.shares -= used
+        remaining -= used
+        if (remaining <= 0) break
+      }
+    }
+  }
+  let remaining = sell.shares
+  const price = sell.amount / sell.shares
+  let fee = 0
+  for (const lot of lots.filter((item) => item.shares > 0)) {
+    if (remaining <= 0) break
+    const used = Math.min(remaining, lot.shares)
+    const days = Math.max(0, (new Date(`${sell.date}T00:00:00Z`) - new Date(`${lot.date}T00:00:00Z`)) / 86400000)
+    const tier = tiers.find((item) => item.max_days == null || days < item.max_days)
+    fee += used * price * (tier?.rate || 0)
+    remaining -= used
+  }
+  return Math.round(fee * 100) / 100
 }
 
 export default r

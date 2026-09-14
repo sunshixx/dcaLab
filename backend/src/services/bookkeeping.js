@@ -16,10 +16,15 @@
 
 const TX_TYPES = ['buy', 'sell', 'dividend_cash', 'dividend_reinvest', 'fee']
 
+function amountCny(tx, amount = tx.amount) {
+  return amount * (tx.currency === 'USD' ? tx.fx_rate : 1)
+}
+
 function sharesForBuy(tx) {
-  if (tx.nav <= 0) return tx.shares > 0 ? tx.shares : 0
-  const netShares = Math.max(0, tx.amount - tx.fee) / tx.nav
-  const legacyGrossShares = tx.amount / tx.nav
+  const price = tx.price > 0 ? tx.price : tx.nav
+  if (price <= 0) return tx.shares > 0 ? tx.shares : 0
+  const netShares = Math.max(0, tx.amount - tx.fee) / price
+  const legacyGrossShares = tx.amount / price
   // 兼容旧记录：旧版本把实际扣款直接除以净值，手续费没有从份额中扣除。
   if (tx.shares <= 0 || (tx.fee > 0 && Math.abs(tx.shares - legacyGrossShares) < 1e-8)) return netShares
   return tx.shares
@@ -43,7 +48,10 @@ export function computeHoldings(txs) {
         invested: 0, // 累计净投入（买入含费 − 卖出到手）
         contributed: 0, // 累计实际投入（买入/费用调整，不扣除卖出和分红）
         buy_count: 0,
-        sell_count: 0
+        sell_count: 0,
+        premium_weight: 0,
+        premium_shares: 0,
+        premium_recorded: false
       })
     return funds.get(code)
   }
@@ -51,16 +59,19 @@ export function computeHoldings(txs) {
     const h = get(tx.fund_code)
     switch (tx.type) {
       case 'buy':
-        h.nav_cost += tx.amount - tx.fee
-        h.total_cost += tx.amount
+        h.nav_cost += amountCny(tx, tx.amount - tx.fee)
+        h.total_cost += amountCny(tx)
         h.shares += sharesForBuy(tx)
-        h.invested += tx.amount
-        h.contributed += tx.amount
+        h.premium_weight += sharesForBuy(tx) * (tx.premium_rate || 0)
+        h.premium_shares += sharesForBuy(tx)
+        h.premium_recorded = h.premium_recorded || tx.premium_rate != null
+        h.invested += amountCny(tx)
+        h.contributed += amountCny(tx)
         h.buy_count++
         break
       case 'dividend_reinvest':
-        h.nav_cost += tx.amount - tx.fee
-        h.total_cost += tx.amount
+        h.nav_cost += amountCny(tx, tx.amount - tx.fee)
+        h.total_cost += amountCny(tx)
         h.shares += sharesForBuy(tx)
         h.dividend_reinvest_total += tx.amount
         break
@@ -68,23 +79,29 @@ export function computeHoldings(txs) {
         const avg = h.shares > 0 ? h.total_cost / h.shares : 0
         const navAvg = h.shares > 0 ? h.nav_cost / h.shares : 0
         const sellShares = tx.shares
-        const proceeds = tx.amount - tx.fee
+        const proceeds = amountCny(tx, tx.amount - tx.fee)
         h.realized_pl += proceeds - sellShares * avg
         h.nav_cost -= sellShares * navAvg
         h.total_cost -= sellShares * avg
         h.shares -= sellShares
+        if (h.premium_shares > 0) {
+          const averagePremium = h.premium_weight / h.premium_shares
+          const removedShares = Math.min(sellShares, h.premium_shares)
+          h.premium_weight -= removedShares * averagePremium
+          h.premium_shares -= removedShares
+        }
         h.invested -= proceeds
         h.sell_count++
         break
       }
       case 'dividend_cash':
-        h.dividend_cash_total += tx.amount
-        h.invested -= tx.amount
+        h.dividend_cash_total += amountCny(tx)
+        h.invested -= amountCny(tx)
         break
       case 'fee':
-        h.total_cost += tx.fee > 0 ? tx.fee : tx.amount
-        h.invested += tx.fee > 0 ? tx.fee : tx.amount
-        h.contributed += tx.fee > 0 ? tx.fee : tx.amount
+        h.total_cost += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
+        h.invested += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
+        h.contributed += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
         break
     }
   }
@@ -92,7 +109,8 @@ export function computeHoldings(txs) {
     ...h,
     // avg_cost 是不含手续费的基金单位成本；total_cost 保留含费现金成本用于收益计算。
     avg_cost: h.shares > 0 ? h.nav_cost / h.shares : 0,
-    avg_cost_with_fee: h.shares > 0 ? h.total_cost / h.shares : 0
+    avg_cost_with_fee: h.shares > 0 ? h.total_cost / h.shares : 0,
+    buy_premium_rate: h.premium_recorded && h.premium_shares > 0 ? h.premium_weight / h.premium_shares : null
   }))
   return rows
 }
@@ -165,11 +183,11 @@ export function xirr(flows) {
 export function portfolioXirr(txs, currentValues) {
   const flows = []
   for (const tx of txs) {
-    if (tx.type === 'buy') flows.push({ date: tx.date, amount: -tx.amount })
-    else if (tx.type === 'sell') flows.push({ date: tx.date, amount: tx.amount - tx.fee })
-    else if (tx.type === 'dividend_cash') flows.push({ date: tx.date, amount: tx.amount })
+    if (tx.type === 'buy') flows.push({ date: tx.date, amount: -amountCny(tx) })
+    else if (tx.type === 'sell') flows.push({ date: tx.date, amount: amountCny(tx, tx.amount - tx.fee) })
+    else if (tx.type === 'dividend_cash') flows.push({ date: tx.date, amount: amountCny(tx) })
     else if (tx.type === 'fee')
-      flows.push({ date: tx.date, amount: -(tx.fee > 0 ? tx.fee : tx.amount) })
+      flows.push({ date: tx.date, amount: -amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount) })
   }
   const totalNow = currentValues.reduce((s, c) => s + c.value, 0)
   if (totalNow > 0) {
@@ -184,7 +202,7 @@ export function portfolioXirr(txs, currentValues) {
 }
 
 // ── CSV ──────────────────────────────────────────────
-const CSV_HEADERS = ['基金代码', '基金名称', '日期', '类型', '金额', '净值', '份额', '手续费', '备注']
+const CSV_HEADERS = ['基金代码', '基金名称', '日期', '类型', '金额', '净值', '成交价', '份额', '手续费', '币种', '汇率', '买入溢价率', '备注']
 const TYPE_CN = {
   buy: '买入',
   sell: '卖出',
@@ -211,8 +229,12 @@ export function exportCsv(funds, txs) {
         TYPE_CN[tx.type] || tx.type,
         tx.amount,
         tx.nav,
+        tx.price || tx.nav,
         tx.shares,
         tx.fee,
+        tx.currency || 'CNY',
+        tx.fx_rate || 1,
+        tx.premium_rate == null ? '' : tx.premium_rate,
         tx.note || ''
       ]
         .map(csvEscape)
@@ -261,8 +283,8 @@ export function parseImportCsv(text) {
     const cells = parseCsvLine(line)
     // 跳过表头（首行或任何以“基金代码”开头的行）
     if (idx === 0 && cells[0] === '基金代码') return
-    if (!/^\d{6}$/.test(cells[0] || '')) {
-      errors.push(`第 ${idx + 1} 行：基金代码须为 6 位数字`)
+    if (!/^(?:\d{6}|[A-Za-z]{1,8})$/.test(cells[0] || '')) {
+      errors.push(`第 ${idx + 1} 行：基金代码须为六位数字或 ticker`)
       return
     }
     const type = CN_TYPE[cells[3]] || cells[3]
@@ -279,15 +301,21 @@ export function parseImportCsv(text) {
       errors.push(`第 ${idx + 1} 行：日期格式应为 YYYY-MM-DD`)
       return
     }
+    const extended = cells.length >= 12
+    const hasPremium = cells.length >= 13
     rows.push({
       fund_code: cells[0],
       date,
       type,
       amount: num(cells[4]),
       nav: num(cells[5]),
-      shares: num(cells[6]),
-      fee: num(cells[7]),
-      note: (cells[8] || '').trim()
+      price: extended ? num(cells[6]) || num(cells[5]) : num(cells[5]),
+      shares: num(cells[extended ? 7 : 6]),
+      fee: num(cells[extended ? 8 : 7]),
+      currency: (extended ? cells[9] : 'CNY').toUpperCase(),
+      fx_rate: extended ? num(cells[10]) || 1 : 1,
+      premium_rate: hasPremium && cells[11] !== '' ? num(cells[11]) : null,
+      note: (hasPremium ? cells[12] : extended ? cells[11] : cells[8] || '').trim()
     })
   })
   return { rows, errors }

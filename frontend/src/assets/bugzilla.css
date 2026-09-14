@@ -127,8 +127,8 @@ table.bz td {
 table.bz tr:nth-child(even) td { background: #f7f7f7; }
 table.bz tr:hover td { background: #ffffcc; }
 table.bz td.num, table.bz th.num { text-align: right; font-variant-numeric: tabular-nums; }
-table.bz td.pos { color: #060; }
-table.bz td.neg { color: #c00; }
+table.bz td.pos { color: #c00; }
+table.bz td.neg { color: #060; }
 table.bz td.wrap { white-space: normal; }
 
 /* 汇总卡片（表格化呈现，符合复古气质） */
@@ -199,6 +199,18 @@ h2.bz-section {
 .bz-scroll { max-height: 420px; overflow: auto; border: 1px solid #999; }
 .bz-scroll table.bz { margin: 0; }
 .bz-scroll table.bz tr:hover td { background: #ffffcc; }
+.portfolio-charts { display: flex; gap: 12px; align-items: stretch; }
+.portfolio-growth-chart { flex: 1 1 auto; min-width: 0; }
+.portfolio-allocation-chart { width: clamp(280px, 32%, 390px); flex: 0 1 390px; min-width: 280px; }
+.portfolio-table-panel { width: 100%; min-width: 0; }
+.portfolio-table-panel table.bz { table-layout: fixed; font-size: 11px; }
+.portfolio-table-panel table.bz th,
+.portfolio-table-panel table.bz td { padding: 3px 4px; white-space: normal; overflow-wrap: anywhere; }
+.portfolio-allocation-chart .chart-box .chart-body { height: 270px; }
+@media (max-width: 900px) {
+  .portfolio-charts { display: block; }
+  .portfolio-allocation-chart { width: 100%; min-width: 0; }
+}
 
 /* 打印友好 */
 @media print {

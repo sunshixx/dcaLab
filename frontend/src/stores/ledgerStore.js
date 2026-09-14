@@ -37,8 +37,9 @@ export const useLedgerStore = defineStore('ledger', {
       }
     },
     async addFund(payload) {
-      await api('/ledger/funds', { method: 'POST', body: payload })
+      const result = await api('/ledger/funds', { method: 'POST', body: payload })
       await this.loadAll()
+      return result
     },
     async removeFund(code) {
       await api(`/ledger/funds/${code}`, { method: 'DELETE' })
@@ -52,11 +53,11 @@ export const useLedgerStore = defineStore('ledger', {
       await api(`/ledger/transactions/${id}`, { method: 'DELETE' })
       await this.loadAll()
     },
-    async loadHoldings() {
-      this.holdings = await api('/ledger/holdings')
+    async loadHoldings({ fresh = false } = {}) {
+      this.holdings = await api(`/ledger/holdings${fresh ? '?refresh=1' : ''}`)
     },
-    async loadStats() {
-      this.stats = await api('/ledger/stats')
+    async loadStats({ fresh = false } = {}) {
+      this.stats = await api(`/ledger/stats${fresh ? '?refresh=1' : ''}`)
     },
     async loadSeries() {
       this.series = await api('/ledger/series')

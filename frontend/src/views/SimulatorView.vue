@@ -1,14 +1,16 @@
 <script setup>
 // 模拟器：左参数面板 / 右结果区（汇总表 + 图表 + 费用分解 + 逐年数据）
 import { onMounted, computed } from 'vue'
-import { useCalcStore, TEMPLATES } from '../stores/calcStore.js'
+import { useCalcStore } from '../stores/calcStore.js'
 import { fmtMoney, fmtWan, fmtPct, toPctInput, fromPctInput } from '../fmt.js'
 import ChartBox from '../components/ChartBox.vue'
 
 const store = useCalcStore()
 onMounted(() => {
   store.fetchPlans().catch(() => {})
-  store.calculate()
+  store.fetchSimulationContext()
+    .catch(() => {})
+    .finally(() => store.calculate())
 })
 
 const r = computed(() => store.result)
@@ -140,8 +142,20 @@ function savePlan() {
       <fieldset>
         <legend>全局参数</legend>
         <div class="bz-form-row">
+          <label>定投频率</label>
+          <select v-model="store.contribution_frequency">
+            <option value="monthly">每月一次</option>
+            <option value="trading_day">每个交易日</option>
+          </select>
+        </div>
+        <div v-if="store.contribution_frequency === 'monthly'" class="bz-form-row">
           <label>月定投金额（元）</label>
           <input type="number" v-model.number="store.monthly_amount" min="1" />
+        </div>
+        <div v-else class="bz-form-row">
+          <label>每日定投金额（元）</label>
+          <input type="number" v-model.number="store.daily_amount" min="0.01" step="0.01" />
+          <span class="bz-hint">按周一至周五约 252 个交易日/年</span>
         </div>
         <div class="bz-form-row">
           <label>定投总年数</label>
@@ -166,13 +180,16 @@ function savePlan() {
 
       <fieldset>
         <legend>标的指数（勾选参与定投）</legend>
-        <div v-for="t in TEMPLATES" :key="t.key" class="bz-asset"
+        <div v-for="t in store.catalog" :key="t.key" class="bz-asset"
           :class="{ disabled: !store.selected.includes(t.key) }">
           <div class="asset-head">
             <label>
               <input type="checkbox" :value="t.key" v-model="store.selected" />
               {{ t.label }}
               <span v-if="t.asset.currency === 'USD'" class="bz-badge">USD</span>
+              <span v-if="t.market" class="bz-hint">
+                当前市值 {{ fmtMoney(t.market.initial_value) }} 元 · 历史年化估计 {{ fmtPct(t.market.expected_return) }}
+              </span>
             </label>
           </div>
           <details v-if="store.selected.includes(t.key)" class="adv" open>

@@ -20,7 +20,10 @@ export const assetSchema = z.object({
   sell_premium: z.number().min(-0.5).max(0.5),
   subscription_fee: z.number().min(0).max(0.05), // 申购费/佣金（每笔买入外扣）
   redemption_fee_tiers: z.array(redemptionTierSchema).max(8).default([]),
-  weight: z.number().min(0.01).max(100).default(1)
+  weight: z.number().min(0.01).max(100).default(1),
+  initial_value: z.number().min(0).max(1e12).default(0),
+  initial_cost: z.number().min(0).max(1e12).default(0),
+  initial_investment: z.number().min(0).max(1e12).default(0)
 })
 
 export const globalSchema = z.object({
@@ -34,6 +37,8 @@ export const globalSchema = z.object({
 
 export const calculateSchema = z.object({
   monthly_amount: z.number().min(1).max(10_000_000),
+  contribution_frequency: z.enum(['monthly', 'trading_day']).default('monthly'),
+  daily_amount: z.number().min(0.01).max(1_000_000).optional(),
   years: z.number().int().min(1).max(50),
   assets: z.array(assetSchema).min(1).max(6),
   global: globalSchema.default({})
@@ -45,10 +50,14 @@ export const planSchema = z.object({
 })
 
 export const fundSchema = z.object({
-  code: z.string().regex(/^\d{6}$/, '基金代码须为 6 位数字'),
+  code: z.string().regex(/^(?:\d{6}|[A-Za-z]{1,8})$/, '请输入 6 位基金代码或美股 ticker'),
   name: z.string().min(1).max(60).optional(),
   type: z.string().max(30).optional(),
   note: z.string().max(200).optional()
+  ,management_fee: z.number().min(0).max(0.05).default(0)
+  ,custody_fee: z.number().min(0).max(0.05).default(0)
+  ,subscription_fee: z.number().min(0).max(0.05).default(0)
+  ,redemption_fee_tiers: z.array(redemptionTierSchema).max(8).default([])
 })
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -60,19 +69,24 @@ const isRealDate = (value) => {
 
 export const transactionSchema = z
   .object({
-    fund_code: z.string().regex(/^\d{6}$/),
+    fund_code: z.string().regex(/^(?:\d{6}|[A-Za-z]{1,8})$/),
     date: z.string().refine(isRealDate, '日期必须是有效的 YYYY-MM-DD 日期'),
     type: z.enum(['buy', 'sell', 'dividend_cash', 'dividend_reinvest', 'fee']),
     amount: z.number().min(0).max(1e9).default(0),
     nav: z.number().min(0).max(1e5).default(0),
+    price: z.number().min(0).max(1e7).default(0),
+    premium_rate: z.number().min(-0.5).max(0.5).nullable().default(null),
     shares: z.number().min(0).max(1e9).default(0),
     fee: z.number().min(0).max(1e7).default(0),
+    currency: z.enum(['CNY', 'USD']).default('CNY'),
+    fx_rate: z.number().min(0).max(100).default(0),
     note: z.string().max(200).default('')
   })
   .superRefine((t, ctx) => {
     if (t.type === 'buy' || t.type === 'dividend_reinvest') {
       if (t.amount <= 0) ctx.addIssue({ code: 'custom', message: '买入金额必须大于 0' })
       if (t.nav <= 0) ctx.addIssue({ code: 'custom', message: '买入需提供成交净值' })
+      if (t.currency === 'USD' && t.price <= 0) ctx.addIssue({ code: 'custom', message: '美元交易需提供成交价格' })
       if (t.fee > t.amount) ctx.addIssue({ code: 'custom', message: '手续费不能高于实际扣款金额' })
     }
     if (t.type === 'sell' && t.shares <= 0) {

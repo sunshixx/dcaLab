@@ -1,6 +1,6 @@
 # DCA-Lab — 定投成本实验室
 
-长期定投策略的**收益与成本对比**模拟器 + **基金记账本**。Web 应用（Vue 3 前端 + Node.js/Express 后端 + SQLite），UI 为 Bugzilla 复古风格。
+长期定投策略的**收益与成本对比**模拟器 + **基金记账本**。Web 应用（Vue 3 前端 + Node.js/Express 后端 + SQLite）。
 
 ![tech](https://img.shields.io/badge/frontend-Vue3%20%2B%20ECharts-blue) ![tech](https://img.shields.io/badge/backend-Node%2024%20%2B%20Express-green) ![db](https://img.shields.io/badge/db-SQLite%20(node%3Asqlite)-lightgrey)
 

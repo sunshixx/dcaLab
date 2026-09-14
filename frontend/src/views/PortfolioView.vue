@@ -8,8 +8,8 @@ import { RETRO_COLORS } from '../chartTheme.js'
 
 const store = useLedgerStore()
 onMounted(() => {
-  store.loadHoldings().catch((e) => (store.error = e.message))
-  store.loadStats().catch(() => {})
+  store.loadHoldings({ fresh: true }).catch((e) => (store.error = e.message))
+  store.loadStats({ fresh: true }).catch(() => {})
   store.loadSeries().catch(() => {})
 })
 
@@ -93,12 +93,18 @@ const st = computed(() => store.stats)
         </tr>
       </table>
 
-      <ChartBox v-if="seriesOption.xAxis" title="投入 vs 市值走势（按历史净值回溯，月度）" :option="seriesOption" />
+      <div class="portfolio-charts">
+        <div class="portfolio-growth-chart">
+          <ChartBox v-if="seriesOption.xAxis" title="投入 vs 市值走势（按历史净值回溯，月度）" :option="seriesOption" />
+        </div>
+        <div class="portfolio-allocation-chart">
+          <ChartBox v-if="allocOption.series" title="资产配置（按市值）" :option="allocOption" />
+        </div>
+      </div>
 
-      <div class="bz-layout">
-        <div style="flex: 1; min-width: 0">
-          <h2 class="bz-section">分基金持仓</h2>
-          <table class="bz">
+      <div class="portfolio-table-panel">
+        <h2 class="bz-section">分基金持仓</h2>
+        <table class="bz">
             <tr>
               <th>基金</th>
               <th class="num">持有份额</th>
@@ -107,6 +113,7 @@ const st = computed(() => store.stats)
               <th class="num">市值</th>
               <th class="num">浮动盈亏</th>
               <th class="num">收益率</th>
+              <th>买入时溢价率</th>
               <th>估值来源 / 日期</th>
             </tr>
             <tr v-for="h in store.holdings" :key="h.fund_code">
@@ -119,19 +126,16 @@ const st = computed(() => store.stats)
               <td class="num">{{ fmtMoney(h.market_value) }}</td>
               <td class="num" :class="h.unrealized_pl >= 0 ? 'pos' : 'neg'">{{ fmtMoney(h.unrealized_pl) }}</td>
               <td class="num" :class="h.unrealized_pl >= 0 ? 'pos' : 'neg'">{{ fmtPct(h.unrealized_pl_pct) }}</td>
+              <td>{{ fmtPct(h.nav_premium_rate ?? 0) }}</td>
               <td>
                 <span class="bz-badge">{{ h.valuation_source || '—' }}</span>
                 <span v-if="h.nav_date" class="bz-hint">{{ h.nav_date }}</span>
               </td>
             </tr>
             <tr v-if="!store.holdings.length">
-              <td colspan="9" style="text-align: center; color: #777">暂无持仓 —— 去记账本录入交易</td>
+              <td colspan="10" style="text-align: center; color: #777">暂无持仓 —— 去记账本录入交易</td>
             </tr>
-          </table>
-        </div>
-        <div style="width: 420px; flex: 0 0 420px">
-          <ChartBox v-if="allocOption.series" title="资产配置（按市值）" :option="allocOption" />
-        </div>
+        </table>
       </div>
     </template>
     <div v-else class="bz-note">加载中…（或尚无交易记录）</div>

@@ -3,7 +3,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { useLedgerStore } from '../stores/ledgerStore.js'
 import { api } from '../api.js'
-import { fmtMoney, fmtPct, TX_TYPE_CN } from '../fmt.js'
+import { fmtMoney, fmtPct, toPctInput, fromPctInput, TX_TYPE_CN } from '../fmt.js'
 
 const store = useLedgerStore()
 onMounted(() => store.loadAll())
@@ -13,18 +13,33 @@ const newCode = ref('')
 const newName = ref('')
 const addFundMsg = ref('')
 const adding = ref(false)
+const CODE_RE = /^(?:\d{6}|[A-Za-z]{1,8})$/
+const feeProfile = ref({ management: 0, custody: 0, subscription: 0, under7: 0, under365: 0, under730: 0, over730: 0 })
 async function addFund() {
   addFundMsg.value = ''
-  if (!/^\d{6}$/.test(newCode.value)) {
-    addFundMsg.value = '基金代码须为 6 位数字'
+  if (!CODE_RE.test(newCode.value)) {
+    addFundMsg.value = '请输入 6 位基金代码或美股 ticker（如 QQQ）'
     return
   }
   adding.value = true
   try {
-    await store.addFund({ code: newCode.value, name: newName.value || undefined })
-    addFundMsg.value = 'ok'
+    const result = await store.addFund({
+      code: newCode.value,
+      name: newName.value || undefined,
+      management_fee: feeProfile.value.management,
+      custody_fee: feeProfile.value.custody,
+      subscription_fee: feeProfile.value.subscription,
+      redemption_fee_tiers: [
+        { max_days: 7, rate: feeProfile.value.under7 },
+        { max_days: 365, rate: feeProfile.value.under365 },
+        { max_days: 730, rate: feeProfile.value.under730 },
+        { max_days: null, rate: feeProfile.value.over730 }
+      ]
+    })
+    addFundMsg.value = result.updated ? 'updated' : 'ok'
     newCode.value = ''
     newName.value = ''
+    feeProfile.value = { management: 0, custody: 0, subscription: 0, under7: 0, under365: 0, under730: 0, over730: 0 }
   } catch (e) {
     addFundMsg.value = e.message
   } finally {
@@ -37,17 +52,60 @@ const today = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
-const tx = ref({ fund_code: '', date: today(), type: 'buy', amount: null, nav: '', shares: '', fee: '', note: '' })
+const tx = ref({ fund_code: '', date: today(), type: 'buy', amount: null, nav: '', shares: '', fee: '', fx_rate: '', premium_rate: '', note: '' })
 const txMsg = ref('')
 const navHint = ref(null) // {nav, date, source}
 const looking = ref(false)
+const quoteTime = ref('')
+const fxMessage = ref('')
+const selectedFund = computed(() => store.funds.find((f) => f.code === tx.value.fund_code))
+
+function formatQuoteTime(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const pad = (n) => String(n).padStart(2, '0')
+  return `查询：${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
 // 输入代码+日期后自动回查该日净值
 async function lookupNav() {
   navHint.value = null
-  if (!/^\d{6}$/.test(tx.value.fund_code) || !tx.value.date) return
+  quoteTime.value = ''
+  fxMessage.value = ''
+  if (selectedFund.value?.market === 'US_ETF') {
+    tx.value.nav = ''
+    tx.value.fx_rate = ''
+  }
+  if (!CODE_RE.test(tx.value.fund_code) || !tx.value.date) return
   looking.value = true
   try {
+    if (selectedFund.value && selectedFund.value.market === 'US_ETF') {
+      const quote = await api(`/market/fund/${tx.value.fund_code}?date=${encodeURIComponent(tx.value.date)}`)
+      if (!quote.quote_price) {
+        fxMessage.value = '请手动输入'
+        return
+      }
+      tx.value.nav = quote.quote_price
+      tx.value.fx_rate = quote.fx_rate || ''
+      if (!quote.fx_rate) fxMessage.value = '实时汇率不可用，请手动输入'
+      quoteTime.value = formatQuoteTime(quote.valuation_date)
+      navHint.value = null
+      return
+    }
+    if (selectedFund.value && selectedFund.value.market === 'CN_ETF') {
+      const quote = await api(`/market/fund/${tx.value.fund_code}?date=${encodeURIComponent(tx.value.date)}`)
+      if (!quote.quote_price && !quote.valuation_nav) {
+        fxMessage.value = '请手动输入'
+        return
+      }
+      tx.value.nav = quote.quote_price || quote.valuation_nav
+      navHint.value = {
+        nav: tx.value.nav,
+        source: quote.premium_rate == null ? '场内价格（暂无可用 NAV）' : `场内价格，溢价率 ${(quote.premium_rate * 100).toFixed(2)}%`
+      }
+      return
+    }
     const navs = await api(`/market/fund/${tx.value.fund_code}/navs?limit=30`)
     const hit = navs.find((n) => n.date <= tx.value.date)
     if (hit) {
@@ -57,6 +115,13 @@ async function lookupNav() {
       navHint.value = { nav: null, source: '未查到该日期之前的净值，请手填' }
     }
   } catch {
+    if (selectedFund.value?.currency === 'USD') {
+      tx.value.fx_rate = ''
+      fxMessage.value = '请手动输入'
+      navHint.value = null
+      return
+    }
+    quoteTime.value = ''
     navHint.value = { nav: null, source: '净值查询暂不可用，请手填' }
   } finally {
     looking.value = false
@@ -74,12 +139,18 @@ async function submitTx() {
       nav: Number(tx.value.nav) || 0,
       shares: Number(tx.value.shares) || 0,
       fee: Number(tx.value.fee) || 0,
+      price: Number(tx.value.nav) || 0,
+      currency: selectedFund.value?.currency || 'CNY',
+      fx_rate: selectedFund.value?.currency === 'USD' ? Number(tx.value.fx_rate) || 0 : 1,
+      premium_rate: tx.value.type === 'buy' && tx.value.premium_rate !== '' ? Number(tx.value.premium_rate) : null,
       note: tx.value.note
     })
     txMsg.value = 'ok'
     tx.value.amount = null
     tx.value.shares = ''
     tx.value.fee = ''
+    tx.value.premium_rate = ''
+    fxMessage.value = ''
     tx.value.note = ''
   } catch (e) {
     txMsg.value = e.message
@@ -117,18 +188,50 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
         <legend>① 添加基金到记账本</legend>
         <div class="bz-form-row">
           <label>基金代码</label>
-          <input type="text" v-model="newCode" maxlength="6" placeholder="如 050025" @keyup.enter="addFund" />
+          <input type="text" v-model="newCode" maxlength="8" placeholder="如 050025 或 QQQ" @keyup.enter="addFund" />
         </div>
         <div class="bz-form-row">
           <label>名称（可留空自动查询）</label>
           <input type="text" v-model="newName" class="wide" />
         </div>
+        <details class="adv">
+          <summary>费率档案（可选，按百分比填写）</summary>
+          <div class="bz-form-row">
+            <label>管理费 %</label>
+            <input type="text" :value="toPctInput(feeProfile.management)" @change="feeProfile.management = fromPctInput($event.target.value)" />
+          </div>
+          <div class="bz-form-row">
+            <label>托管费 %</label>
+            <input type="text" :value="toPctInput(feeProfile.custody)" @change="feeProfile.custody = fromPctInput($event.target.value)" />
+          </div>
+          <div class="bz-form-row">
+            <label>申购费/佣金 %</label>
+            <input type="text" :value="toPctInput(feeProfile.subscription)" @change="feeProfile.subscription = fromPctInput($event.target.value)" />
+          </div>
+          <div class="bz-form-row">
+            <label>赎回费 &lt;7天 %</label>
+            <input type="text" :value="toPctInput(feeProfile.under7)" @change="feeProfile.under7 = fromPctInput($event.target.value)" />
+          </div>
+          <div class="bz-form-row">
+            <label>赎回费 7天~1年 %</label>
+            <input type="text" :value="toPctInput(feeProfile.under365)" @change="feeProfile.under365 = fromPctInput($event.target.value)" />
+          </div>
+          <div class="bz-form-row">
+            <label>赎回费 1~2年 %</label>
+            <input type="text" :value="toPctInput(feeProfile.under730)" @change="feeProfile.under730 = fromPctInput($event.target.value)" />
+          </div>
+          <div class="bz-form-row">
+            <label>赎回费 ≥2年 %</label>
+            <input type="text" :value="toPctInput(feeProfile.over730)" @change="feeProfile.over730 = fromPctInput($event.target.value)" />
+          </div>
+        </details>
         <p>
           <button :disabled="adding" @click="addFund">查询并添加</button>
           <span v-if="adding" class="bz-hint"> 查询中…</span>
         </p>
         <div v-if="addFundMsg && addFundMsg !== 'ok'" class="bz-error">{{ addFundMsg }}</div>
         <div v-else-if="addFundMsg === 'ok'" class="bz-ok">已添加</div>
+        <div v-else-if="addFundMsg === 'updated'" class="bz-ok">已更新已有基金及费率</div>
       </fieldset>
 
       <fieldset>
@@ -155,14 +258,20 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
           <input type="date" v-model="tx.date" @change="lookupNav" />
         </div>
         <div class="bz-form-row">
-          <label>{{ tx.type === 'sell' ? '卖出总额（元）' : tx.type === 'dividend_cash' ? '分红到账（元）' : tx.type === 'fee' ? '费用金额（元）' : '实际扣款（元）' }}</label>
+          <label>{{ tx.type === 'sell' ? '卖出总额' : tx.type === 'dividend_cash' ? '分红到账' : tx.type === 'fee' ? '费用金额' : '实际扣款' }}（{{ selectedFund?.currency || 'CNY' }}）</label>
           <input type="number" v-model.number="tx.amount" min="0" />
           <span v-if="tx.type === 'buy' || tx.type === 'dividend_reinvest'" class="bz-hint">含手续费</span>
         </div>
         <div class="bz-form-row">
-          <label>成交净值</label>
+          <label>{{ selectedFund?.market === 'US_ETF' ? '成交价格（USD/股）' : selectedFund?.market === 'CN_ETF' ? '成交价格（元/份）' : '成交净值' }}</label>
           <input type="number" v-model.number="tx.nav" step="0.0001" min="0" @change="lookupNav" />
           <button style="padding: 1px 6px" :disabled="looking" @click="lookupNav">回查</button>
+        </div>
+        <div v-if="selectedFund?.currency === 'USD'" class="bz-form-row">
+          <label>成交汇率（CNY/USD）</label>
+          <input type="number" v-model.number="tx.fx_rate" min="0.1" step="0.0001" />
+          <span v-if="quoteTime" class="bz-hint">{{ quoteTime }}</span>
+          <span v-if="fxMessage" class="bz-hint">{{ fxMessage }}</span>
         </div>
         <div v-if="navHint" class="bz-hint" style="margin-left: 154px">
           {{ navHint.source }}<template v-if="navHint.nav">：{{ navHint.nav }}</template>
@@ -175,6 +284,12 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
           <label>手续费（元）</label>
           <input type="number" v-model.number="tx.fee" min="0" step="0.01" />
           <span v-if="tx.type === 'buy' || tx.type === 'dividend_reinvest'" class="bz-hint">从实际扣款中扣除</span>
+        </div>
+        <div v-if="tx.type === 'buy'" class="bz-form-row">
+          <label>买入时溢价率 %</label>
+          <input type="text" placeholder="查不到可留空" :value="tx.premium_rate === '' ? '' : toPctInput(tx.premium_rate)"
+            @change="tx.premium_rate = $event.target.value.trim() === '' ? '' : fromPctInput($event.target.value)" />
+          <span class="bz-hint">只记录买入时刻</span>
         </div>
         <div class="bz-form-row">
           <label>备注</label>

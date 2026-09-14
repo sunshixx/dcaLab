@@ -64,9 +64,13 @@ function emptyAssetState(params) {
   }
   return {
     params,
-    V: 0, // 持仓公平市值（本币计价；份额×公平净值=1）
-    lots: [], // 逐月批次 {basis, value, month}
-    invested: 0, // 累计投入（CNY）
+    V: params.initial_value || 0, // 持仓公平市值（本币计价；份额×公平净值=1）
+    lots: params.initial_value > 0 ? [{
+      basis: params.initial_cost > 0 ? params.initial_cost : params.initial_value,
+      value: params.initial_value,
+      month: 0
+    }] : [], // 逐月批次 {basis, value, month}
+    invested: params.initial_investment ?? params.initial_cost ?? 0, // 当前持仓成本 + 模拟期间新增投入（CNY）
     cost,
     costT,
     premInvest: 0, // 发生溢价的买入金额累计（本币）
@@ -92,7 +96,7 @@ function redemptionRateFor(tiers, days) {
 /**
  * 核心模拟：单次确定性推演（不含三情景，三情景由 simulateWithScenarios 复用本函数）
  */
-export function simulate({ monthly_amount, years, assets, global }) {
+export function simulate({ monthly_amount, daily_amount, contribution_frequency = 'monthly', years, assets, global }) {
   const g = {
     exchange_rate: 7.0,
     fx_drift: 0,
@@ -102,10 +106,13 @@ export function simulate({ monthly_amount, years, assets, global }) {
     overflow_asset: null,
     ...global
   }
-  const N = years * 12
+  const frequency = contribution_frequency
+  const dailyAmount = daily_amount || monthly_amount
+  const periodsPerYear = frequency === 'trading_day' ? 252 : 12
+  const periods = years * periodsPerYear
 
   // 汇率：m = 已过月数；第 t 月的买入发生在已过 (t-1) 个月时点
-  const fx = (m) => g.exchange_rate * Math.pow(1 + g.fx_drift, m / 12)
+  const fx = (period) => g.exchange_rate * Math.pow(1 + g.fx_drift, period / periodsPerYear)
 
   const wSum = assets.reduce((s, a) => s + a.weight, 0)
   const states = assets.map((a) => emptyAssetState(a))
@@ -117,7 +124,7 @@ export function simulate({ monthly_amount, years, assets, global }) {
     st.cost[bucket] += cny
     const rNet = st.params.expected_return - st.params.management_fee - st.params.cash_drag
     const rm = rNet > -1 ? Math.pow(1 + rNet, 1 / 12) - 1 : -1
-    const remaining = Math.max(0, N - month)
+    const remaining = Math.max(0, periods - month)
     st.costT[bucket] += cny * Math.pow(1 + rm, remaining)
   }
 
@@ -146,9 +153,9 @@ export function simulate({ monthly_amount, years, assets, global }) {
     const p = st.params
     if (st.V <= 0) return
     const V0 = st.V
-    const gm = Math.pow(1 + p.expected_return, 1 / 12) - 1
-    const mgmt = (V0 * p.management_fee) / 12
-    const drag = (V0 * p.cash_drag) / 12
+    const gm = Math.pow(1 + p.expected_return, 1 / periodsPerYear) - 1
+    const mgmt = (V0 * p.management_fee) / periodsPerYear
+    const drag = (V0 * p.cash_drag) / periodsPerYear
     const grown = V0 * (1 + gm)
     // 有机增长净费用（用于批次等比缩放）
     const organic = grown - mgmt - drag
@@ -157,7 +164,7 @@ export function simulate({ monthly_amount, years, assets, global }) {
     st.V = organic
 
     // 股息：按增长后的市值计提，税后净额再投资并形成新批次
-    const divGross = (st.V * p.dividend_yield) / 12
+    const divGross = (st.V * p.dividend_yield) / periodsPerYear
     const divTax = divGross * p.dividend_tax_rate
     const divNet = divGross - divTax
     st.V += divNet
@@ -171,10 +178,11 @@ export function simulate({ monthly_amount, years, assets, global }) {
 
   const yearly = []
 
-  for (let t = 1; t <= N; t++) {
+  for (let t = 1; t <= periods; t++) {
     for (let i = 0; i < states.length; i++) {
       const st = states[i]
-      const c = (monthly_amount * st.params.weight) / wSum
+      const contribution = frequency === 'trading_day' ? dailyAmount : monthly_amount
+      const c = (contribution * st.params.weight) / wSum
       const p = st.params
       const effPM = effectivePremiumMonths(p)
       const premActive = t <= effPM
@@ -192,7 +200,7 @@ export function simulate({ monthly_amount, years, assets, global }) {
     }
     if (overflow) growOneMonth(overflow, t)
 
-    if (t % 12 === 0) {
+    if (t % periodsPerYear === 0) {
       let value = 0
       let costNom = 0
       let costTerm = 0
@@ -205,7 +213,7 @@ export function simulate({ monthly_amount, years, assets, global }) {
         }
       }
       yearly.push({
-        year: t / 12,
+        year: t / periodsPerYear,
         cumulative_investment: round2(bucket.reduce((s, st) => s + st.invested, 0)),
         portfolio_value: round2(value),
         cost_lost: round2(costNom),
@@ -227,8 +235,8 @@ export function simulate({ monthly_amount, years, assets, global }) {
     let redemptionFee = 0
     let taxableGain = 0
     for (const lot of st.lots) {
-      const monthsHeld = N - lot.month + 1
-      const days = monthsHeld * 30.4375
+        const periodsHeld = periods - lot.month + 1
+        const days = frequency === 'trading_day' ? periodsHeld * 365 / 252 : periodsHeld * 30.4375
       const rate = redemptionRateFor(p.redemption_fee_tiers, days)
       const lotGross = lot.value * sellFactor
       redemptionFee += lotGross * rate
@@ -238,9 +246,9 @@ export function simulate({ monthly_amount, years, assets, global }) {
     const capTax = taxableGain * p.capital_gains_tax_rate
     const grossNat = st.V * sellFactor
     const netNat = grossNat - redemptionFee - capTax
-    const finalRate = p.currency === 'USD' ? fx(N) : 1
-    addCost(st, 'redemption_fees', redemptionFee, N, finalRate)
-    addCost(st, 'capital_gains_tax', capTax, N, finalRate)
+    const finalRate = p.currency === 'USD' ? fx(periods) : 1
+    addCost(st, 'redemption_fees', redemptionFee, periods, finalRate)
+    addCost(st, 'capital_gains_tax', capTax, periods, finalRate)
     return {
       name: p.name,
       currency: p.currency,
@@ -293,7 +301,7 @@ export function simulate({ monthly_amount, years, assets, global }) {
     cost_breakdown_terminal: roundCost(agg.costT),
     yearly_data: yearly,
     asset_details: assetDetails,
-    fx_final: round4(fx(N)),
+    fx_final: round4(fx(periods)),
     years
   }
 }

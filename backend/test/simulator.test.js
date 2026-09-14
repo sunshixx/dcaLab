@@ -173,3 +173,28 @@ test('用例8：三情景与敏感性', () => {
   assert.equal(neu.label, '中性')
   assert.ok(Math.abs(neu.final_value - res.final_value) < 0.01, '中性与基础结果一致')
 })
+
+test('现有持仓作为模拟起点：初始市值继续增长且成本计入总投入', () => {
+  const res = simulate({
+    monthly_amount: 100,
+    years: 1,
+    assets: [baseAsset({ initial_value: 1000, initial_cost: 800 })],
+    global: baseGlobal
+  })
+  assert.equal(res.total_investment, 2000)
+  assert.equal(res.final_value, 2200)
+})
+
+test('按交易日定投：一年投入 252 次且年化收益按日频率计算', () => {
+  const res = simulate({
+    monthly_amount: 1,
+    daily_amount: 100,
+    contribution_frequency: 'trading_day',
+    years: 1,
+    assets: [baseAsset({ expected_return: 0 })],
+    global: baseGlobal
+  })
+  assert.equal(res.total_investment, 25200)
+  assert.equal(res.final_value, 25200)
+  assert.equal(res.yearly_data.length, 1)
+})
