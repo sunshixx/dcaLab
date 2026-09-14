@@ -1,0 +1,317 @@
+{
+  "market": "us",
+  "report_date": "2026-09-11",
+  "report_type": "full_rth",
+  "generated_at": "2026-09-14 08:22:01 CST",
+  "overview_lead": "标普500收报7656.98点（+0.86%），纳斯达克100收报26333点（+0.96%）；科技股多数收涨，市场风险偏好回暖。",
+  "overview": "2026-09-11美股收涨：标普500报7656.98点（+0.86%），纳斯达克100报26333点（+0.96%）。科技股普遍反弹。数据源：东方财富日K（已通过 Yahoo Finance MCP 交叉验证）。",
+  "data_notes": [
+    "RTH仅指美东09:30–16:00；数据来源为东方财富push2his公开接口（日线），经Yahoo Finance交叉验证准确。",
+    "本报告仅含日线OHLCV，不含5分钟日内K线（东方财富美股不支持5分K，TradingView被沙箱阻断）。图表区域显示\"数据不足\"。"
+  ],
+  "data_gaps": [
+    "5分钟RTH日内K线缺失（东方财富仅提供A股5分K，TradingView WebSocket 被当前运行环境阻断）。",
+    "异动股/板块ETF全面列表/VIX等宏观资产未拉取。",
+    "市场新闻/国际新闻/人物言论未自动填充。"
+  ],
+  "series_files": {
+    "us_core": "reports/data/tradingview_rth_2026-09-11.json"
+  },
+  "benchmark_kpis": [
+    {
+      "key": "SPX",
+      "ticker": "SPX",
+      "name": "标普500",
+      "open": 7636.75,
+      "high": 7677.02,
+      "low": 7636.75,
+      "close": 7656.98,
+      "rth_change": 20.229999999999563,
+      "rth_pct": 0.2649032638229576,
+      "previous_close": 7591.7,
+      "day_change": 65.27999999999975,
+      "day_pct": 0.8598864549442142,
+      "volume": 2651603648,
+      "bar_count": 0,
+      "kpi_label": "标普500",
+      "kpi_basis": "现金指数 · 前收至收盘",
+      "is_proxy": false,
+      "comment": "标普500收报7656.98，当日+0.86%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "NDX",
+      "ticker": "NDX",
+      "name": "纳斯达克",
+      "open": 26289.41,
+      "high": 26431.22,
+      "low": 26283.11,
+      "close": 26333.04,
+      "rth_change": 43.63000000000102,
+      "rth_pct": 0.16596036198606168,
+      "previous_close": 26081.72,
+      "day_change": 251.3199999999997,
+      "day_pct": 0.9635867573150936,
+      "volume": 5662986240,
+      "bar_count": 0,
+      "kpi_label": "纳斯达克100",
+      "kpi_basis": "现金指数 · 前收至收盘",
+      "is_proxy": false,
+      "comment": "纳斯达克收报26333.04，当日+0.96%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "key_stocks": [
+    {
+      "key": "INTC",
+      "ticker": "INTC",
+      "name": "英特尔",
+      "open": 102.47,
+      "high": 104.9,
+      "low": 101.07,
+      "close": 102.94,
+      "rth_change": 0.46999999999999886,
+      "rth_pct": 0.45867083048696244,
+      "previous_close": 100.32,
+      "day_change": 2.6200000000000045,
+      "day_pct": 2.611642743221698,
+      "volume": 86990385,
+      "bar_count": 0,
+      "comment": "英特尔收报102.94，当日+2.61%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "NVDA",
+      "ticker": "NVDA",
+      "name": "英伟达",
+      "open": 221.235,
+      "high": 222,
+      "low": 218.15,
+      "close": 218.29,
+      "rth_change": -2.9450000000000216,
+      "rth_pct": -1.3311636947137773,
+      "previous_close": 218.36,
+      "day_change": -0.0700000000000216,
+      "day_pct": -0.03205715332479375,
+      "volume": 89060140,
+      "bar_count": 0,
+      "comment": "英伟达收报218.29，当日-0.03%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "GOOG",
+      "ticker": "GOOG",
+      "name": "谷歌-C",
+      "open": 332.73,
+      "high": 339.95,
+      "low": 332.55,
+      "close": 335.45,
+      "rth_change": 2.7199999999999704,
+      "rth_pct": 0.8174796381450244,
+      "previous_close": 330.39,
+      "day_change": 5.060000000000002,
+      "day_pct": 1.531523351191022,
+      "volume": 15820741,
+      "bar_count": 0,
+      "comment": "谷歌-C收报335.45，当日+1.53%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "MSFT",
+      "ticker": "MSFT",
+      "name": "微软",
+      "open": 495.65,
+      "high": 498.97,
+      "low": 492.58,
+      "close": 495.63,
+      "rth_change": -0.01999999999998181,
+      "rth_pct": -0.004035105417121709,
+      "previous_close": 492.44,
+      "day_change": 3.1899999999999977,
+      "day_pct": 0.6477946551864289,
+      "volume": 14518435,
+      "bar_count": 0,
+      "comment": "微软收报495.63，当日+0.65%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "AAPL",
+      "ticker": "AAPL",
+      "name": "苹果",
+      "open": 327.45,
+      "high": 336.22,
+      "low": 326.3,
+      "close": 332.27,
+      "rth_change": 4.819999999999993,
+      "rth_pct": 1.4719804550312965,
+      "previous_close": 326.57,
+      "day_change": 5.699999999999989,
+      "day_pct": 1.745414459380834,
+      "volume": 50716865,
+      "bar_count": 0,
+      "comment": "苹果收报332.27，当日+1.75%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "SKHY",
+      "ticker": "SKHY",
+      "name": "SK海力士",
+      "open": 192.94,
+      "high": 192.94,
+      "low": 187,
+      "close": 190.07,
+      "rth_change": -2.8700000000000045,
+      "rth_pct": -1.487509070177262,
+      "previous_close": 188.3,
+      "day_change": 1.7699999999999818,
+      "day_pct": 0.9399893786510738,
+      "volume": 14934632,
+      "bar_count": 0,
+      "comment": "SK海力士收报190.07，当日+0.94%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "TSM",
+      "ticker": "TSM",
+      "name": "台积电",
+      "open": 431.55,
+      "high": 435.37,
+      "low": 428.9,
+      "close": 433.24,
+      "rth_change": 1.6899999999999977,
+      "rth_pct": 0.39161163248755404,
+      "previous_close": 428.03,
+      "day_change": 5.210000000000036,
+      "day_pct": 1.2172044015606565,
+      "volume": 10638194,
+      "bar_count": 0,
+      "comment": "台积电收报433.24，当日+1.22%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "sectors": [
+    {
+      "key": "QQQ",
+      "ticker": "QQQ",
+      "name": "纳斯达克100ETF-Invesco",
+      "open": 715.68,
+      "high": 717.63,
+      "low": 713.63,
+      "close": 714.88,
+      "rth_change": -0.7999999999999545,
+      "rth_pct": -0.11178180192263909,
+      "previous_close": 708.69,
+      "day_change": 6.189999999999941,
+      "day_pct": 0.8734425489282938,
+      "volume": 26649142,
+      "bar_count": 0,
+      "comment": "纳斯达克100ETF-Invesco收报714.88，当日+0.87%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "movers": [],
+  "market_news": [],
+  "global_news": [],
+  "voices": [],
+  "next_watch": [],
+  "sources": {
+    "东方财富美股行情": "https://quote.eastmoney.com/us/",
+    "Yahoo Finance（交叉验证）": "https://finance.yahoo.com/"
+  },
+  "benchmark_analysis": "标普500（+0.86%）与纳斯达克100（+0.96%）同步收涨。",
+  "structure_analysis": "科技股领涨反弹。本报告仅含日线概览，板块结构分析需完整数据管道。",
+  "us_watchlist": {
+    "source": "builtin_default",
+    "stocks": [
+      {
+        "ticker": "INTC"
+      },
+      {
+        "ticker": "NVDA"
+      },
+      {
+        "ticker": "GOOG"
+      },
+      {
+        "ticker": "MSFT"
+      },
+      {
+        "ticker": "AAPL"
+      },
+      {
+        "ticker": "SKHY"
+      },
+      {
+        "ticker": "TSM"
+      }
+    ],
+    "sectors": [
+      {
+        "ticker": "QQQ"
+      }
+    ]
+  },
+  "title": "美股每日盘后回顾 — 2026年9月11日（星期五）",
+  "used_series_files": [],
+  "quality_checks": {
+    "exact_title": true,
+    "aapl_spelling": true,
+    "session_boundary": true,
+    "inline_css": true,
+    "external_js": false,
+    "visual_slots": 5,
+    "embedded_svg_charts": 1,
+    "market_news_count": 0,
+    "global_news_count": 0,
+    "voices_count": 0,
+    "mover_count": 0
+  },
+  "rendered_benchmark_kpis": [
+    {
+      "key": "SPX",
+      "ticker": "SPX",
+      "name": "标普500",
+      "open": 7636.75,
+      "high": 7677.02,
+      "low": 7636.75,
+      "close": 7656.98,
+      "rth_change": 20.229999999999563,
+      "rth_pct": 0.2649032638229576,
+      "previous_close": 7591.7,
+      "day_change": 65.27999999999975,
+      "day_pct": 0.8598864549442142,
+      "volume": 2651603648,
+      "bar_count": 0,
+      "kpi_label": "标普500",
+      "kpi_basis": "现金指数 · 前收至收盘",
+      "is_proxy": false,
+      "comment": "标普500收报7656.98，当日+0.86%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "NDX",
+      "ticker": "NDX",
+      "name": "纳斯达克",
+      "open": 26289.41,
+      "high": 26431.22,
+      "low": 26283.11,
+      "close": 26333.04,
+      "rth_change": 43.63000000000102,
+      "rth_pct": 0.16596036198606168,
+      "previous_close": 26081.72,
+      "day_change": 251.3199999999997,
+      "day_pct": 0.9635867573150936,
+      "volume": 5662986240,
+      "bar_count": 0,
+      "kpi_label": "纳斯达克100",
+      "kpi_basis": "现金指数 · 前收至收盘",
+      "is_proxy": false,
+      "comment": "纳斯达克收报26333.04，当日+0.96%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "html_path": "/mnt/c/Users/DP/.zcode/workspace/default/nas/reports/market_review_2026-09-11.html",
+  "audit_path": "/mnt/c/Users/DP/.zcode/workspace/default/nas/reports/data/market_data_2026-09-11.json",
+  "html_sha256": "f6e0a52dad2dc0177938be2fc3fe52118d86f30c01b2b52b8bb075dd899c0e9c",
+  "html_bytes": 21739
+}

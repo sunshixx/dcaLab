@@ -1,0 +1,19 @@
+{
+  "name": "dca-cost-lab",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "定投成本实验室 —— 长期定投收益与成本模拟 + 记账本",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "init": "node scripts/setup.mjs && npm install && npm run install:all && npm run db:migrate",
+    "db:migrate": "node scripts/migrate.mjs",
+    "db:backup": "node scripts/db-backup.mjs",
+    "db:restore": "node scripts/db-restore.mjs",
+    "dev": "concurrently -n api,web -c yellow,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "test": "npm --prefix backend test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

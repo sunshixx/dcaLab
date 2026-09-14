@@ -1,0 +1,386 @@
+{
+  "market": "us",
+  "report_date": "2026-09-14",
+  "report_type": "full_rth",
+  "generated_at": "2026-09-14 09:05:58 CST",
+  "overview_lead": "标普500收报7656.98点（+0.86%），纳斯达克100收报26333点（+0.96%）；科技股多数收涨，市场风险偏好回暖。",
+  "overview": "2026-09-14美股收涨：标普500报7656.98点（+0.86%），纳斯达克100报26333点（+0.96%）。科技股普遍反弹。数据源：东方财富日K（已通过 Yahoo Finance MCP 交叉验证）。",
+  "data_notes": [
+    "RTH仅指美东09:30–16:00；数据来源为东方财富push2his公开接口（日线），经Yahoo Finance交叉验证准确。",
+    "本报告仅含日线OHLCV，不含5分钟日内K线（东方财富美股不支持5分K，TradingView被沙箱阻断）。图表区域显示\"数据不足\"。"
+  ],
+  "data_gaps": [
+    "5分钟RTH日内K线缺失（东方财富仅提供A股5分K，TradingView WebSocket 被当前运行环境阻断）。",
+    "异动股/板块ETF全面列表/VIX等宏观资产未拉取。",
+    "市场新闻：指定日期没有取得可核验 RSS 条目。"
+  ],
+  "series_files": {
+    "us_core": "reports/data/tradingview_rth_2026-09-14.json"
+  },
+  "benchmark_kpis": [
+    {
+      "key": "SPX",
+      "ticker": "SPX",
+      "name": "标普500",
+      "open": 7636.75,
+      "high": 7677.02,
+      "low": 7636.75,
+      "close": 7656.98,
+      "rth_change": 20.229999999999563,
+      "rth_pct": 0.2649032638229576,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 0.86,
+      "volume": 2651603648,
+      "bar_count": 0,
+      "kpi_label": "标普500",
+      "kpi_basis": "现金指数 · 前收至收盘",
+      "is_proxy": false,
+      "comment": "标普500收报7656.98，当日+0.86%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "NDX",
+      "ticker": "NDX",
+      "name": "纳斯达克",
+      "open": 26289.41,
+      "high": 26431.22,
+      "low": 26283.11,
+      "close": 26333.04,
+      "rth_change": 43.63000000000102,
+      "rth_pct": 0.16596036198606168,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 0.96,
+      "volume": 5662986240,
+      "bar_count": 0,
+      "kpi_label": "纳斯达克100",
+      "kpi_basis": "现金指数 · 前收至收盘",
+      "is_proxy": false,
+      "comment": "纳斯达克收报26333.04，当日+0.96%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "key_stocks": [
+    {
+      "key": "INTC",
+      "ticker": "INTC",
+      "name": "英特尔",
+      "open": 102.47,
+      "high": 104.9,
+      "low": 101.07,
+      "close": 102.94,
+      "rth_change": 0.46999999999999886,
+      "rth_pct": 0.45867083048696244,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 2.61,
+      "volume": 86990385,
+      "bar_count": 0,
+      "comment": "英特尔收报102.94，当日+2.61%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "NVDA",
+      "ticker": "NVDA",
+      "name": "英伟达",
+      "open": 221.235,
+      "high": 222,
+      "low": 218.15,
+      "close": 218.29,
+      "rth_change": -2.9450000000000216,
+      "rth_pct": -1.3311636947137773,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": -0.03,
+      "volume": 89060140,
+      "bar_count": 0,
+      "comment": "英伟达收报218.29，当日-0.03%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "GOOG",
+      "ticker": "GOOG",
+      "name": "谷歌-C",
+      "open": 332.73,
+      "high": 339.95,
+      "low": 332.55,
+      "close": 335.45,
+      "rth_change": 2.7199999999999704,
+      "rth_pct": 0.8174796381450244,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 1.53,
+      "volume": 15820741,
+      "bar_count": 0,
+      "comment": "谷歌-C收报335.45，当日+1.53%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "MSFT",
+      "ticker": "MSFT",
+      "name": "微软",
+      "open": 495.65,
+      "high": 498.97,
+      "low": 492.58,
+      "close": 495.63,
+      "rth_change": -0.01999999999998181,
+      "rth_pct": -0.004035105417121709,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 0.65,
+      "volume": 14518435,
+      "bar_count": 0,
+      "comment": "微软收报495.63，当日+0.65%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "AAPL",
+      "ticker": "AAPL",
+      "name": "苹果",
+      "open": 327.45,
+      "high": 336.22,
+      "low": 326.3,
+      "close": 332.27,
+      "rth_change": 4.819999999999993,
+      "rth_pct": 1.4719804550312965,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 1.75,
+      "volume": 50716865,
+      "bar_count": 0,
+      "comment": "苹果收报332.27，当日+1.75%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "SKHY",
+      "ticker": "SKHY",
+      "name": "SK海力士",
+      "open": 192.94,
+      "high": 192.94,
+      "low": 187,
+      "close": 190.07,
+      "rth_change": -2.8700000000000045,
+      "rth_pct": -1.487509070177262,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 0.94,
+      "volume": 14934632,
+      "bar_count": 0,
+      "comment": "SK海力士收报190.07，当日+0.94%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "TSM",
+      "ticker": "TSM",
+      "name": "台积电",
+      "open": 431.55,
+      "high": 435.37,
+      "low": 428.9,
+      "close": 433.24,
+      "rth_change": 1.6899999999999977,
+      "rth_pct": 0.39161163248755404,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 1.22,
+      "volume": 10638194,
+      "bar_count": 0,
+      "comment": "台积电收报433.24，当日+1.22%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "sectors": [
+    {
+      "key": "SPY",
+      "ticker": "SPY",
+      "name": "标普500ETF-SPDR",
+      "open": 764.72,
+      "high": 766.38,
+      "low": 763.6,
+      "close": 764.29,
+      "rth_change": -0.43000000000006366,
+      "rth_pct": -0.056229731143431216,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 0.85,
+      "volume": 45512741,
+      "bar_count": 0,
+      "comment": "标普500ETF-SPDR收报764.29，当日+0.85%。",
+      "source": "https://quote.eastmoney.com/"
+    },
+    {
+      "key": "QQQ",
+      "ticker": "QQQ",
+      "name": "纳斯达克100ETF-Invesco",
+      "open": 715.68,
+      "high": 717.63,
+      "low": 713.63,
+      "close": 714.88,
+      "rth_change": -0.7999999999999545,
+      "rth_pct": -0.11178180192263909,
+      "previous_close": null,
+      "day_change": null,
+      "day_pct": 0.87,
+      "volume": 26649142,
+      "bar_count": 0,
+      "comment": "纳斯达克100ETF-Invesco收报714.88，当日+0.87%。",
+      "source": "https://quote.eastmoney.com/"
+    }
+  ],
+  "movers": [],
+  "market_news": [],
+  "global_news": [
+    {
+      "title": "OpenAI boss Sam Altman spells out how and why the AI industry wants to slow down: 'We could lose control'",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 08:59:18 GMT",
+      "summary": "OpenAI's chief has made comments detailing how AI safety frameworks and a slowdown could work, as the industry unites behind concerns.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/sam-altman-ai-slowdown-anthropic-amodei-musk.html"
+    },
+    {
+      "title": "Trump urges Ukraine to stop ‘knocking out’ Russian oil refineries as U.S. diesel hits record",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 07:22:01 GMT",
+      "summary": "U.S. diesel prices have surpassed $6 a gallon for the first time ever as the Ukraine and Iran wars drive broader energy supply concerns.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/trump-ukraine-russia-diesel-prices-oil.html"
+    },
+    {
+      "title": "Iran says it destroys U.S. advanced drone over Hormuz as Middle East conflict intensifies",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 07:24:21 GMT",
+      "summary": "Iran said it downed an advanced American drone over the Strait of Hormuz, as Tehran and Washington trade warnings and strikes with no sign of de-escalation.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/us-iran-trump-hormuz-gulf-oil-crude-talks-.html"
+    },
+    {
+      "title": "Satellite images show extent of damage to Saudi Arabia’s oil pipeline that bypasses Strait of Hormuz",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 08:51:57 GMT",
+      "summary": "Saudi Arabia temporarily shut the roughly 750-mile pipeline as attacks threaten a key alternative to the Strait of Hormuz.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/iran-war-saudi-arabia-east-west-pipeline-oil.html"
+    },
+    {
+      "title": "Oil prices rise after Saudi Arabia shut down critical pipeline that bypasses Strait of Hormuz",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 07:52:46 GMT",
+      "summary": "Saudi Arabia has faced escalating attacks from Iran-allied militant groups in recent days.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/13/oil-price-iran-war-strait-hormuz-saudi-pipeline.html"
+    },
+    {
+      "title": "U.S. Treasury yields are steady as 10-year closes in on 5% ahead of Fed rates decision",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 08:02:13 GMT",
+      "summary": "The 10-year Treasury yield is closing in on 5%, a level last touched in October 2023. Strategists say the drivers behind higher yields are more important.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/10-year-us-treasury-is-closing-in-on-5percent.html"
+    },
+    {
+      "title": "Yen appreciation has carry-trade seekers looking at these two currencies",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 08:22:39 GMT",
+      "summary": "Yen appreciation has carry-trade seekers looking at these two currencies",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/yen-strength-carry-trade-cad-yuan.html"
+    },
+    {
+      "title": "LA Clippers owner Steve Ballmer apologizes over team sanctions",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 04:58:46 GMT",
+      "summary": "Ballmer said that the team is complying with the penalties, has paid the fines, and is \"moving forward.\"",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/la-clippers-steve-ballmer-apologizes-kawhi-leonard.html"
+    },
+    {
+      "title": "Novo Nordisk rebrands to 'Novo,' unveils corporate changes as it fights for obesity market share",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 07:00:01 GMT",
+      "summary": "The Danish drugmaker called the changes the beginning of a new chapter for the company, which faces stiff competition from Eli Lilly.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/novo-nordisk-rebrands-to-novo-ceo-mike-doustdar.html"
+    },
+    {
+      "title": "Cadbury cut two months off its supply chain lead time for a key chocolate-bar ingredient in one move",
+      "region": "国际市场",
+      "source_time": "Google News：Mon, 14 Sep 2026 09:02:13 GMT",
+      "summary": "Mondelez is expanding its chocolate manufacturing operations in Malaysia, with the company also seeing further room for growth across Southeast Asia.",
+      "importance": "需结合后续官方信息和市场反应持续核验。",
+      "impact": "可能影响风险偏好、利率预期或大宗商品价格；方向不作确定判断。",
+      "impact_score": 3,
+      "impact_type": "宏观/国际市场",
+      "url": "https://www.cnbc.com/2026/09/14/cadbury-supply-chain-lead-time-key-ingredient-chocolate-crumble-malaysia.html"
+    }
+  ],
+  "voices": [],
+  "next_watch": [],
+  "sources": {
+    "东方财富美股行情": "https://quote.eastmoney.com/us/",
+    "Yahoo Finance（交叉验证）": "https://finance.yahoo.com/"
+  },
+  "benchmark_analysis": "标普500（+0.86%）与纳斯达克100（+0.96%）同步收涨。",
+  "structure_analysis": "科技股领涨反弹。本报告仅含日线概览，板块结构分析需完整数据管道。",
+  "us_watchlist": {
+    "source": "builtin_default",
+    "stocks": [
+      {
+        "ticker": "INTC"
+      },
+      {
+        "ticker": "NVDA"
+      },
+      {
+        "ticker": "GOOG"
+      },
+      {
+        "ticker": "MSFT"
+      },
+      {
+        "ticker": "AAPL"
+      },
+      {
+        "ticker": "SKHY"
+      },
+      {
+        "ticker": "TSM"
+      }
+    ],
+    "sectors": [
+      {
+        "ticker": "SPY"
+      },
+      {
+        "ticker": "QQQ"
+      }
+    ]
+  }
+}

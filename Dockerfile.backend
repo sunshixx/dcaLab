@@ -1,0 +1,14 @@
+# 后端：Node 24（含内置 node:sqlite）
+FROM node:24-alpine
+RUN apk add --no-cache python3
+WORKDIR /app
+COPY backend/package.json backend/package-lock.json* ./
+RUN npm install --omit=dev
+COPY backend/src ./src
+COPY backend/migrations ./migrations
+COPY skills ./skills
+COPY reports ./reports
+ENV WORKSPACE_ROOT=/app
+ENV PORT=3001
+EXPOSE 3001
+CMD ["node", "src/server.js"]

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "skills": {
+    "generate-us-market-daily-review": {
+      "name": "generate-us-market-daily-review",
+      "version": "1.0.4",
+      "source": "redskill",
+      "install_dir": "/mnt/c/Users/DP/.zcode/workspace/default/nas/skills/generate-us-market-daily-review",
+      "installed_at": "1789370442603",
+      "sha256": "bd4b863ab08dd0696f602b0edf151f69b1c4cd060b34b659d0c91af7007ce473"
+    }
+  }
+}

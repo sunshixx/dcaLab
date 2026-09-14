@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+      - ./skills:/app/skills:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      # Docker 容器访问宿主机代理时填写，例如 http://host.docker.internal:7890
+      MARKET_PROXY_URL: ${MARKET_PROXY_URL:-http://host.docker.internal:7897}
+      HTTP_PROXY: ${MARKET_PROXY_URL:-http://host.docker.internal:7897}
+      HTTPS_PROXY: ${MARKET_PROXY_URL:-http://host.docker.internal:7897}
+      NO_PROXY: localhost,127.0.0.1,backend,host.docker.internal
+    expose:
+      - "3001"
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend

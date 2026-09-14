@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+.mimosa/
+data/*.db
+data/*.db-journal
+backend/data/*.db
+backend/data/*.db-journal
+my-backup*.db
+*.before-restore
+dist/
+*.log
+.env.local
