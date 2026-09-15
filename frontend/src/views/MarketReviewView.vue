@@ -12,6 +12,7 @@ const date = ref('')
 const list = ref({ us: [], cn: [] })
 const summary = ref(null)
 const error = ref('')
+const notice = ref('')
 const loading = ref(false)
 const refreshing = ref(false)
 
@@ -20,6 +21,7 @@ onMounted(refreshAndLoad)
 async function refreshAndLoad() {
   refreshing.value = true
   error.value = ''
+  notice.value = ''
   // 先展示本地已有报告，再在后台检查缓存并按需实时刷新。
   await loadList()
   const results = await Promise.allSettled([
@@ -29,7 +31,14 @@ async function refreshAndLoad() {
   const failures = results
     .filter((result) => result.status === 'rejected')
     .map((result) => result.reason.message)
+  // 闸门拦截（如 A股未收盘）不是错误：请求成功但被拒绝，作为提示展示
+  const blocked = results
+    .filter((r) => r.status === 'fulfilled' && r.value && r.value.blocked)
+    .map((r) => r.value.error)
   await loadList()
+  if (blocked.length) {
+    notice.value = blocked.join('；')
+  }
   if (failures.length) {
     error.value = `部分市场刷新失败：${failures.join('；')}`
   }
@@ -197,6 +206,8 @@ const sources = computed(() => {
     </div>
 
     <div v-if="error" class="bz-error">{{ error }}</div>
+
+    <div v-if="notice" class="bz-note">⏳ {{ notice }}</div>
 
     <div v-if="refreshing" class="bz-note">正在加载最新复盘内容...</div>
 

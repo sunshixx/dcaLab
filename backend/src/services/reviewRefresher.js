@@ -8,6 +8,7 @@ import { refreshUsReport as emFallback } from './usMarketFetcher.js'
 import { attachNews } from './newsFetcher.js'
 import { getCachedReport } from './reportCache.js'
 import { saveReport } from './reportStore.js'
+import { isChinaBusinessDay } from './chinaFixedIncome.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WS = process.env.WORKSPACE_ROOT || path.resolve(__dirname, '../../..')
@@ -119,26 +120,73 @@ async function render(date, market) {
   return { html: htmlP, audit: auditP }
 }
 
+// ── A股收盘闸门 ──
+// 盘中抓取必然残缺：当日日K要收盘后才结算，缺它就算不出 day_pct（涨跌幅），
+// 5 分K也只有开盘后的零头，涨跌排行与申万行业仍是前一交易日快照。
+// 曾因此在 09:52 生成过一份涨跌幅全为 null 的报告，故在抓取前拦截。
+const CN_CLOSE_TIME = '15:00'   // A股收盘
+const CN_SETTLE_MINUTES = 35    // 留出日K结算与排行/行业快照刷新的时间
+
+const cstParts = (d = new Date()) => {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(d)
+  const get = (t) => p.find((x) => x.type === t)?.value || ''
+  return { date: `${get('year')}-${get('month')}-${get('day')}`, hour: get('hour'), minute: get('minute') }
+}
+
+/**
+ * 判断某日 A股报告是否已可安全生成（交易时段内不可）。
+ * 非当前日期视为历史日期，一律放行（历史数据已结算）。
+ * @returns {{allowed: boolean, reason?: string}}
+ */
+export function cnReportGate(date) {
+  const now = cstParts()
+  if (date !== now.date) return { allowed: true }
+
+  const minutes = Number(now.hour) * 60 + Number(now.minute)
+  const readyAt = 15 * 60 + CN_SETTLE_MINUTES
+  // 周末/休市日：当天不会有新行情，但仍放行以便生成休市分支报告
+  if (!isChinaBusinessDay(date)) return { allowed: true }
+  if (minutes < readyAt) {
+    const remain = readyAt - minutes
+    return {
+      allowed: false,
+      reason: `A股尚未完成收盘结算（当前 ${now.hour}:${now.minute}，可用时间 ${CN_CLOSE_TIME} 后约 ${CN_SETTLE_MINUTES} 分钟）。`
+        + `盘中抓取会因当日日K未生成而导致涨跌幅、异动股、板块快照全部缺失，`
+        + `请约 ${Math.ceil(remain / 60)} 小时后再试，或传入历史日期。`
+    }
+  }
+  return { allowed: true }
+}
+
 // ── CN 刷新（新浪行情，完全在沙箱内可达） ──
 export async function refreshCN(date) {
   if (!date) {
     const cached = getCachedReport('cn')
     if (cached) return cached
   }
-  // 若未指定日期，从当前日期向前探测最近交易日
+  // 未指定日期：在收盘闸门允许的前提下，向前探测最近可用交易日
   if (!date) {
     const now = new Date()
     for (const d of [0, 1, 2, 3, 4, 5, 6]) {
       const t = new Date(now)
       t.setDate(t.getDate() - d)
       const ds = t.toISOString().slice(0, 10)
+      // 今天若还没收盘，直接跳过（否则会生成残缺报告并覆盖好的那份）
+      if (!cnReportGate(ds).allowed) continue
       try {
         const test = await refreshCNDate(ds)
         if (test.ok) return test
       } catch {}
     }
-    return { ok: false, error: '近3日均非交易日' }
+    const gate = cnReportGate(cstParts().date)
+    return { ok: false, error: gate.allowed ? '近7日均非交易日' : gate.reason }
   }
+  // 显式指定日期时同样拦截（避免手动刷新写坏当日报告）
+  const gate = cnReportGate(date)
+  if (!gate.allowed) return { ok: false, error: gate.reason, blocked: true }
   return refreshCNDate(date)
 }
 
