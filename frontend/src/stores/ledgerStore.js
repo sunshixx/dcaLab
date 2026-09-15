@@ -10,19 +10,44 @@ export const useLedgerStore = defineStore('ledger', {
     stats: null,
     series: null,
     filterFund: '',
+    page: 1,
+    pageSize: 20,
     loading: false,
     error: ''
   }),
   getters: {
+    // 过滤后的全量流水（按日期倒序，最新在前）——用于统计总条数
     filteredTxs(state) {
-      if (!state.filterFund) return [...state.transactions].reverse()
-      return state.transactions.filter((t) => t.fund_code === state.filterFund).reverse()
+      const list = state.filterFund
+        ? state.transactions.filter((t) => t.fund_code === state.filterFund)
+        : [...state.transactions]
+      return list.reverse()
+    },
+    totalPages() {
+      return Math.max(1, Math.ceil(this.filteredTxs.length / this.pageSize))
+    },
+    // 页码做钳制，删记录后页码越界也不会显示空页
+    currentPage() {
+      return Math.min(Math.max(1, this.page), this.totalPages)
+    },
+    // 当前页实际渲染的流水
+    pagedTxs() {
+      const start = (this.currentPage - 1) * this.pageSize
+      return this.filteredTxs.slice(start, start + this.pageSize)
     },
     fundNameMap(state) {
       return new Map(state.funds.map((f) => [f.code, f.name]))
     }
   },
   actions: {
+    setPage(p) {
+      this.page = Math.min(Math.max(1, Number(p) || 1), this.totalPages)
+    },
+    setPageSize(n) {
+      const size = Number(n) > 0 ? Number(n) : 20
+      this.pageSize = size
+      this.page = 1
+    },
     async loadAll() {
       this.loading = true
       this.error = ''
@@ -48,6 +73,7 @@ export const useLedgerStore = defineStore('ledger', {
     async addTx(payload) {
       await api('/ledger/transactions', { method: 'POST', body: payload })
       await this.loadAll()
+      this.page = 1 // 新记录按日期倒序排在最前，跳回第 1 页让用户直接看到
     },
     async removeTx(id) {
       await api(`/ledger/transactions/${id}`, { method: 'DELETE' })

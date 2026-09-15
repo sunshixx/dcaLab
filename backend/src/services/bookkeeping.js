@@ -73,7 +73,7 @@ export function computeHoldings(txs) {
         h.nav_cost += amountCny(tx, tx.amount - tx.fee)
         h.total_cost += amountCny(tx)
         h.shares += sharesForBuy(tx)
-        h.dividend_reinvest_total += tx.amount
+        h.dividend_reinvest_total += amountCny(tx)
         break
       case 'sell': {
         const avg = h.shares > 0 ? h.total_cost / h.shares : 0
@@ -116,6 +116,30 @@ export function computeHoldings(txs) {
 }
 
 export { sharesForBuy }
+
+/**
+ * 是否已存在日期相近（默认 ±7 天）的分红记录。
+ * 自动分红再投按除息日合成，用户手动记账常用到账日，同笔分红两个日期可能相差数天。
+ */
+export function nearbyDividendExists(txs, fundCode, date, days = 7) {
+  const target = Date.parse(`${date}T00:00:00Z`)
+  if (!Number.isFinite(target)) return false
+  return txs.some((tx) => {
+    if (tx.fund_code !== fundCode) return false
+    if (tx.type !== 'dividend_cash' && tx.type !== 'dividend_reinvest') return false
+    const at = Date.parse(`${tx.date}T00:00:00Z`)
+    return Number.isFinite(at) && Math.abs(at - target) <= days * 86400000
+  })
+}
+
+/**
+ * 删除交易前的完整性校验：剔除目标记录后重算，任何基金的期末份额不得为负
+ * （与 POST 卖出校验同口径：只看按日期重演后的期末份额）。
+ */
+export function sharesStillValidAfterRemoval(allTxs, removeId) {
+  const remaining = allTxs.filter((tx) => tx.id !== removeId)
+  return computeHoldings(remaining).every((h) => h.shares >= -1e-6)
+}
 
 const DAY_MS = 86400000
 const parseDate = (s) => new Date(s + 'T00:00:00')

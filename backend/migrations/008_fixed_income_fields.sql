@@ -1,0 +1,13 @@
+ALTER TABLE transactions ADD COLUMN nominal_days INTEGER;
+ALTER TABLE transactions ADD COLUMN annual_rate REAL;
+ALTER TABLE transactions ADD COLUMN commission_rate REAL;
+ALTER TABLE transactions ADD COLUMN tax_rate REAL;
+ALTER TABLE transactions ADD COLUMN face_value REAL;
+ALTER TABLE transactions ADD COLUMN last_interest_date TEXT;
+ALTER TABLE transactions ADD COLUMN maturity_date TEXT;
+ALTER TABLE transactions ADD COLUMN first_settlement_date TEXT;
+ALTER TABLE transactions ADD COLUMN expiry_date TEXT;
+ALTER TABLE transactions ADD COLUMN interest_days INTEGER;
+ALTER TABLE transactions ADD COLUMN occupied_days INTEGER;
+ALTER TABLE transactions ADD COLUMN expected_interest REAL;
+ALTER TABLE transactions ADD COLUMN expected_net_income REAL;

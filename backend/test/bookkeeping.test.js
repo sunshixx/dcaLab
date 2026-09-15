@@ -1,7 +1,7 @@
 // 记账引擎单元测试：移动加权成本 / XIRR / CSV
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { computeHoldings, xirr, parseImportCsv, exportCsv } from '../src/services/bookkeeping.js'
+import { computeHoldings, xirr, parseImportCsv, exportCsv, nearbyDividendExists, sharesStillValidAfterRemoval } from '../src/services/bookkeeping.js'
 
 // ── XIRR 已知解 ──
 test('XIRR：单笔一年期投入 10% 收益 → 10%', () => {
@@ -135,4 +135,39 @@ test('CSV：错误行被跳过并报告', () => {
   const { rows, errors } = parseImportCsv(csv)
   assert.equal(rows.length, 0)
   assert.equal(errors.length, 2)
+})
+
+// ── 回归：USD 分红再投必须按汇率折算 ──
+test('USD 分红再投按汇率折算计入分红累计与成本', () => {
+  const [h] = computeHoldings([
+    { fund_code: 'QQQ', type: 'buy', date: '2024-01-05', amount: 1000, fee: 1, nav: 2, shares: 499.5, currency: 'USD', fx_rate: 7 },
+    { fund_code: 'QQQ', type: 'dividend_reinvest', date: '2024-06-01', amount: 10, fee: 0, nav: 2, shares: 5, currency: 'USD', fx_rate: 7 }
+  ])
+  assert.equal(h.dividend_reinvest_total, 70) // 10 USD × 7，不能按 10 计
+  assert.equal(h.nav_cost, 999 * 7 + 70)
+  assert.equal(h.total_cost, 1000 * 7 + 70)
+})
+
+// ── 回归：分红去重窗口 ±7 天 ──
+test('±7 天内存在同基金分红记录即视为重复', () => {
+  const txs = [{ id: 1, fund_code: '000001', type: 'dividend_cash', date: '2024-06-03', amount: 20 }]
+  assert.equal(nearbyDividendExists(txs, '000001', '2024-06-08', 7), true) // 差 5 天
+  assert.equal(nearbyDividendExists(txs, '000001', '2024-06-11', 7), false) // 差 8 天
+  assert.equal(nearbyDividendExists(txs, '000001', '2024-06-03', 0), true)
+  assert.equal(nearbyDividendExists(txs, '000002', '2024-06-03', 7), false) // 不同基金
+  assert.equal(
+    nearbyDividendExists([{ id: 1, fund_code: '000001', type: 'buy', date: '2024-06-03', amount: 20 }], '000001', '2024-06-03', 7),
+    false
+  ) // 买入不算分红记录
+})
+
+// ── 回归：删除交易前重演份额 ──
+test('删除买入导致后续卖出份额为负时应拦截', () => {
+  const txs = [
+    { id: 1, fund_code: '000001', type: 'buy', date: '2024-01-01', amount: 1000, nav: 1, shares: 1000, fee: 0 },
+    { id: 2, fund_code: '000001', type: 'sell', date: '2024-02-01', amount: 500, nav: 1, shares: 500, fee: 0 }
+  ]
+  assert.equal(sharesStillValidAfterRemoval(txs, 2), true) // 删卖出没问题
+  assert.equal(sharesStillValidAfterRemoval(txs, 1), false) // 删买入 → 份额 -500
+  assert.equal(sharesStillValidAfterRemoval(txs, 99), true) // id 不存在等于无变化
 })

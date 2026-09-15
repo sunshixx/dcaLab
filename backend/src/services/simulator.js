@@ -16,10 +16,11 @@
 // 6. 管理费/托管费：按月初资产市值的 fee/12 逐月计提（基金按日计提的
 //    月度近似，行业通行简化）。
 // 7. 费用的复利机会成本（“真实成本”终值口径）：
-//    第 t 月被扣的费用 cost，到期末损失的不只是自身，还包括其本可在
+//    第 t 期被扣的费用 cost，到期末损失的不只是自身，还包括其本可在
 //    组合内按净收益率复利的增值：
-//    terminal_cost = cost × (1 + r_net_m)^(N − t)
-//    其中 r_net_m = (1 + expected_return − management_fee − cash_drag)^(1/12) − 1
+//    terminal_cost = cost × (1 + r_net_period)^(N − t)
+//    其中 r_net_period = (1 + expected_return − management_fee − cash_drag)^(1/periodsPerYear) − 1
+//    periodsPerYear = 12（按月）或 252（按交易日），与 (N − t) 的期数单位保持一致。
 // 8. 赎回费/资本利得税：按逐月批次（lot）精确计算。每批持有天数 =
 //    持有月数 × 30.4375（年均天数/12），赎回费率按阶梯表取档；
 //    应税收益 = 净卖出款 − 批次成本（买入摊薄成本与分红再投资成本均入批次）。
@@ -107,8 +108,12 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
     ...global
   }
   const frequency = contribution_frequency
-  const dailyAmount = daily_amount || monthly_amount
+  // 按交易日定投缺 daily_amount 时，绝不能回退用 monthly_amount（会把投入放大 252 倍）
+  if (frequency === 'trading_day' && !(daily_amount > 0)) {
+    throw new Error('按交易日定投必须提供 daily_amount（每个交易日的定投金额）')
+  }
   const periodsPerYear = frequency === 'trading_day' ? 252 : 12
+  const periodsPerMonth = periodsPerYear / 12
   const periods = years * periodsPerYear
 
   // 汇率：m = 已过月数；第 t 月的买入发生在已过 (t-1) 个月时点
@@ -122,8 +127,18 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
   function addCost(st, bucket, amountNat, month, fxRate) {
     const cny = amountNat * fxRate
     st.cost[bucket] += cny
-    const rNet = st.params.expected_return - st.params.management_fee - st.params.cash_drag
-    const rm = rNet > -1 ? Math.pow(1 + rNet, 1 / 12) - 1 : -1
+    // 机会成本折现率必须与组合“实际”净增长率一致：
+    //   年化净增长 = (1 + 价格收益) × (1 + 税后股息率) − 管理费 − 现金拖累
+    // 此前漏掉了税后股息再投资，高股息标的的终值口径会被系统性低估。
+    const dyNet = st.params.dividend_yield * (1 - st.params.dividend_tax_rate)
+    const rNet =
+      (1 + st.params.expected_return) * (1 + dyNet) - 1 -
+      st.params.management_fee - st.params.cash_drag
+    // 复利期数必须与 remaining 的时间单位一致：
+    //   monthly      → periodsPerYear=12  → 月利率，remaining 为月数
+    //   trading_day  → periodsPerYear=252 → 日利率，remaining 为交易日数
+    // （此前硬编码 1/12，按交易日时会用月利率复利几千次，导致终值口径爆炸）
+    const rm = rNet > -1 ? Math.pow(1 + rNet, 1 / periodsPerYear) - 1 : -1
     const remaining = Math.max(0, periods - month)
     st.costT[bucket] += cny * Math.pow(1 + rm, remaining)
   }
@@ -181,11 +196,14 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
   for (let t = 1; t <= periods; t++) {
     for (let i = 0; i < states.length; i++) {
       const st = states[i]
-      const contribution = frequency === 'trading_day' ? dailyAmount : monthly_amount
-      const c = (contribution * st.params.weight) / wSum
+      const contribution = frequency === 'trading_day' ? daily_amount : monthly_amount
+      // 权重即“每个标的自己的每期金额”时，wSum 是各标金额之和；全部为 0 时不投任何标的
+      const c = wSum > 0 ? (contribution * st.params.weight) / wSum : 0
       const p = st.params
       const effPM = effectivePremiumMonths(p)
-      const premActive = t <= effPM
+      // 溢价窗口按“月”计：trading_day 频率下 t 是交易日序号，先折算成已过月数
+      const monthIndex = Math.ceil(t / periodsPerMonth)
+      const premActive = monthIndex <= effPM
       const divert =
         g.enable_dynamic_switch && premActive && p.buy_premium > g.premium_threshold
       if (divert) {
@@ -291,6 +309,15 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
   const totalCost = COST_KEYS.reduce((s, k) => s + agg.cost[k], 0)
   const totalCostTerminal = COST_KEYS.reduce((s, k) => s + agg.costT[k], 0)
 
+  // 逐年快照在循环内生成，而赎回费/资本利得税是循环结束后 settle() 才计入的，
+  // 因此最后一年必须回填，否则「逐年数据」与「费用分解/期末终值」会互相矛盾。
+  if (yearly.length) {
+    const last = yearly[yearly.length - 1]
+    last.portfolio_value = round2(finalValue)
+    last.cost_lost = round2(totalCost)
+    last.cost_lost_terminal = round2(totalCostTerminal)
+  }
+
   return {
     total_investment: round2(totalInvestment),
     final_value: round2(finalValue),
@@ -313,13 +340,25 @@ export function simulateWithScenarios(payload) {
   const base = simulate(payload)
   const scenarios = []
   for (const shift of [-0.02, 0, 0.02]) {
+    if (shift === 0) {
+      // shift = 0 与基础运行完全等价，直接复用结果，不重复模拟
+      scenarios.push({
+        label: '中性',
+        shift: 0,
+        final_value: base.final_value,
+        final_value_real: base.final_value_real,
+        total_cost: base.total_cost,
+        total_cost_terminal: base.total_cost_terminal
+      })
+      continue
+    }
     const p = structuredClone(payload)
     for (const a of p.assets) a.expected_return = a.expected_return + shift
     if (p.global && p.global.overflow_asset)
       p.global.overflow_asset.expected_return += shift
     const r = simulate(p)
     scenarios.push({
-      label: shift < 0 ? '悲观 (−2pp)' : shift > 0 ? '乐观 (+2pp)' : '中性',
+      label: shift < 0 ? '悲观 (−2pp)' : '乐观 (+2pp)',
       shift,
       final_value: r.final_value,
       final_value_real: r.final_value_real,

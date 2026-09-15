@@ -42,3 +42,19 @@ test('累计实际投入作为简单收益率分母，不因卖出回款而被�
   assert.equal(h.contributed, 1000)
   assert.equal(totalPl / h.contributed, 0.1)
 })
+
+test('国债逆回购到期卖出：本金回收，利息计入已实现盈亏', () => {
+  const [h] = computeHoldings([
+    { fund_code: '204001', type: 'buy', amount: 10000, fee: 0, nav: 1, shares: 10000 },
+    { fund_code: '204001', type: 'sell', amount: 10008, fee: 0, nav: 1, shares: 10000 }
+  ])
+  assert.equal(h.shares, 0)
+  assert.equal(h.realized_pl, 8)
+  assert.equal(h.contributed, 10000)
+})
+
+test('公积金按 1 元单位价记录：买入金额就是余额', () => {
+  const [h] = computeHoldings([{ fund_code: 'GJJ', type: 'buy', amount: 2500, fee: 0, nav: 1, shares: 0 }])
+  assert.equal(h.shares, 2500)
+  assert.equal(h.total_cost, 2500)
+})

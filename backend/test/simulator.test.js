@@ -198,3 +198,209 @@ test('按交易日定投：一年投入 252 次且年化收益按日频率计算
   assert.equal(res.final_value, 25200)
   assert.equal(res.yearly_data.length, 1)
 })
+
+// ── 回归：trading_day 缺 daily_amount 必须报错，而不是把月金额当每日金额放大 252 倍 ──
+test('按交易日定投缺 daily_amount 时抛错', () => {
+  assert.throws(
+    () =>
+      simulate({
+        monthly_amount: 100,
+        contribution_frequency: 'trading_day',
+        years: 1,
+        assets: [baseAsset()],
+        global: baseGlobal
+      }),
+    /daily_amount/
+  )
+})
+
+// ── 回归：trading_day 频率下溢价窗口按月粒度（premium_months=1 覆盖约 21 个交易日）──
+test('按交易日定投：溢价窗口按月粒度生效', () => {
+  const res = simulate({
+    monthly_amount: 1,
+    daily_amount: 100,
+    contribution_frequency: 'trading_day',
+    years: 1,
+    assets: [baseAsset({ buy_premium: 0.08, premium_months: 1 })],
+    global: baseGlobal
+  })
+  // 252/12 = 21 交易日/月；首月 21 笔 × 100 × 0.08/1.08（输出经 round2 保留两位）
+  const expected = 21 * 100 * (0.08 / 1.08)
+  assert.ok(
+    Math.abs(res.cost_breakdown.premium_loss - expected) < 0.01,
+    `premium=${res.cost_breakdown.premium_loss} expected=${expected}`
+  )
+})
+
+// ── 回归：费用终值口径的折现期数必须与时间单位一致 ──
+// 第 t 期费用 cost 的终值 = cost × (1+净收益率)^((N−t)/ppy)，
+// ppy = 12（按月）或 252（按交易日）。独立重算，不复制引擎代码路径。
+test('按月定投：申购费终值口径 = 名义 × (1+净收益率)^剩余月数/12', () => {
+  const C = 100, r = 0.12, N = 12, feeRate = 0.01
+  let nominal = 0, terminal = 0
+  for (let t = 1; t <= N; t++) {
+    const fee = C * feeRate
+    nominal += fee
+    terminal += fee * Math.pow(1 + r, (N - t) / 12)
+  }
+  const res = simulate({
+    monthly_amount: C, years: 1, contribution_frequency: 'monthly',
+    assets: [baseAsset({ expected_return: r, subscription_fee: feeRate })],
+    global: baseGlobal
+  })
+  assert.ok(Math.abs(res.cost_breakdown.subscription_fees - nominal) < 0.01)
+  assert.ok(
+    Math.abs(res.cost_breakdown_terminal.subscription_fees - terminal) < 0.01,
+    `terminal=${res.cost_breakdown_terminal.subscription_fees} expected=${terminal}`
+  )
+})
+
+test('按交易日定投：费用终值口径按交易日折现（期数单位一致性回归）', () => {
+  const C = 100, r = 0.12, ppy = 252, N = ppy, feeRate = 0.01
+  let nominal = 0, terminal = 0
+  for (let t = 1; t <= N; t++) {
+    const fee = C * feeRate
+    nominal += fee
+    terminal += fee * Math.pow(1 + r, (N - t) / ppy)
+  }
+  const res = simulate({
+    monthly_amount: 1, daily_amount: C, contribution_frequency: 'trading_day',
+    years: 1,
+    assets: [baseAsset({ expected_return: r, subscription_fee: feeRate })],
+    global: baseGlobal
+  })
+  assert.ok(Math.abs(res.cost_breakdown.subscription_fees - nominal) < 0.01)
+  // 修复前：折现率硬编码月利率，此处会放大到 1e11 量级
+  assert.ok(
+    Math.abs(res.cost_breakdown_terminal.subscription_fees - terminal) < 0.01,
+    `terminal=${res.cost_breakdown_terminal.subscription_fees} expected=${terminal}`
+  )
+})
+
+test('按交易日与按月同规模定投：终值口径费用应在同一量级', () => {
+  const monthly = simulate({
+    monthly_amount: 3000, years: 10, contribution_frequency: 'monthly',
+    assets: [baseAsset({ expected_return: 0.07, management_fee: 0.005 })],
+    global: baseGlobal
+  })
+  const daily = simulate({
+    monthly_amount: 3000, daily_amount: 3000 / 21, years: 10,
+    contribution_frequency: 'trading_day',
+    assets: [baseAsset({ expected_return: 0.07, management_fee: 0.005 })],
+    global: baseGlobal
+  })
+  const nominalRatio = daily.total_cost / monthly.total_cost
+  const terminalRatio = daily.total_cost_terminal / monthly.total_cost_terminal
+  assert.ok(nominalRatio > 0.9 && nominalRatio < 1.1, `名义口径比=${nominalRatio}`)
+  assert.ok(terminalRatio > 0.9 && terminalRatio < 1.1, `终值口径比=${terminalRatio}`)
+})
+
+// ── 回归：各标的按自己的定投金额分配，而不是均分 ──
+// 前端把「每期定投金额」归一化成占比作为 weight，合计 = Σ金额，
+// 因此 weight 相同的标的才会均分，金额不同的必须各得自己的一份。
+test('金额不同的标的各得自己的定投额（不再均分）', () => {
+  const res = simulate({
+    monthly_amount: 110,
+    years: 1,
+    assets: [
+      baseAsset({ name: '标普A', weight: 100 / 110 }),
+      baseAsset({ name: '标普B', weight: 10 / 110 })
+    ],
+    global: baseGlobal
+  })
+  const a = res.asset_details.find((x) => x.name === '标普A')
+  const b = res.asset_details.find((x) => x.name === '标普B')
+  assert.ok(Math.abs(a.invested - 1200) < 1, `A 投入=${a.invested} 期望 1200`)
+  assert.ok(Math.abs(b.invested - 120) < 1, `B 投入=${b.invested} 期望 120`)
+  assert.equal(res.total_investment, 1320)
+  // 关键：两者金额不同，不能相等
+  assert.ok(Math.abs(a.invested - b.invested) > 1000)
+})
+
+// ── 回归：权重 0 = 只持有存量、不参与定投分配 ──
+test('权重为 0 的标的只持有不定投', () => {
+  const res = simulate({
+    monthly_amount: 100,
+    years: 1,
+    assets: [
+      baseAsset({ name: '定投标的', weight: 1 }),
+      baseAsset({ name: '存量持仓', weight: 0, initial_value: 5000, initial_cost: 4000 })
+    ],
+    global: baseGlobal
+  })
+  const hold = res.asset_details.find((x) => x.name === '存量持仓')
+  const dca = res.asset_details.find((x) => x.name === '定投标的')
+  assert.equal(hold.invested, 4000, '存量标的只应记初始成本')
+  assert.equal(hold.final_value, 5000, 'r=0 时存量市值不变')
+  assert.equal(dca.invested, 1200, '定投标的应拿满全部月投')
+  assert.equal(res.total_investment, 5200)
+})
+
+// ── 回归：全部权重为 0 时不得除零（wSum = 0）──
+test('全部权重为 0 时不产生新增投入', () => {
+  const res = simulate({
+    monthly_amount: 100,
+    years: 1,
+    assets: [baseAsset({ name: '存量', weight: 0, initial_value: 1000, initial_cost: 1000 })],
+    global: baseGlobal
+  })
+  assert.equal(res.total_investment, 1000)
+  assert.equal(res.final_value, 1000)
+  assert.ok(Number.isFinite(res.final_value))
+})
+// 赎回费/资本利得税在循环结束后的 settle() 才计入，逐年快照必须回填最后一年，
+// 否则「逐年数据」表格最后一行与「费用分解/期末终值」互相矛盾。
+test('逐年数据最后一年与汇总口径一致（含期末赎回费与资本利得税）', () => {
+  const res = simulate({
+    monthly_amount: 1000,
+    years: 3,
+    assets: [
+      baseAsset({
+        expected_return: 0.08,
+        sell_premium: 0.05,
+        capital_gains_tax_rate: 0.2,
+        redemption_fee_tiers: [{ max_days: null, rate: 0.01 }]
+      })
+    ],
+    global: baseGlobal
+  })
+  assert.ok(res.cost_breakdown.redemption_fees > 0, '用例应产生赎回费')
+  assert.ok(res.cost_breakdown.capital_gains_tax > 0, '用例应产生资本利得税')
+  const last = res.yearly_data[res.yearly_data.length - 1]
+  assert.ok(Math.abs(last.cost_lost - res.total_cost) < 0.01, `逐年=${last.cost_lost} 汇总=${res.total_cost}`)
+  assert.ok(
+    Math.abs(last.cost_lost_terminal - res.total_cost_terminal) < 0.01,
+    `逐年终值=${last.cost_lost_terminal} 汇总=${res.total_cost_terminal}`
+  )
+  assert.ok(Math.abs(last.portfolio_value - res.final_value) < 0.01, `逐年市值=${last.portfolio_value} 汇总终值=${res.final_value}`)
+})
+
+// ── 回归：终值口径的折现率必须包含税后股息再投资 ──
+// 组合实际年化净增长 = (1+价格收益)(1+税后股息率) − 管理费 − 现金拖累。
+// 此前只用「价格收益 − 管理费 − 现金拖累」，高股息标的的终值口径被系统性低估。
+test('终值口径折现率包含税后股息再投资', () => {
+  const r = 0.06, fee = 0.004, dy = 0.03, tax = 0.2, N = 12, sub = 0.001
+  const dyNet = dy * (1 - tax)
+  const rNet = (1 + r) * (1 + dyNet) - 1 - fee
+  // 申购费每月恒定，故终值/名义之比 = 平均折现因子，可独立精确推导
+  let nominal = 0, terminal = 0
+  for (let t = 1; t <= N; t++) {
+    nominal += 1
+    terminal += Math.pow(1 + rNet, (N - t) / 12)
+  }
+  const res = simulate({
+    monthly_amount: 1000,
+    years: 1,
+    assets: [baseAsset({ expected_return: r, management_fee: fee, dividend_yield: dy, dividend_tax_rate: tax, subscription_fee: sub })],
+    global: baseGlobal
+  })
+  const ratio = res.cost_breakdown_terminal.subscription_fees / res.cost_breakdown.subscription_fees
+  const expected = terminal / nominal
+  // 输出经 round2 取整，容差取 2e-3（漏算股息时偏差约 1.2e-2，仍可检出）
+  assert.ok(Math.abs(ratio - expected) < 2e-3, `实际折现比=${ratio} 期望=${expected}`)
+  // 反向确认：若漏掉股息，折现比会明显偏小
+  const rNetNoDiv = r - fee
+  let t2 = 0
+  for (let t = 1; t <= N; t++) t2 += Math.pow(1 + rNetNoDiv, (N - t) / 12)
+  assert.ok(expected > t2 / nominal * 1.005, '含股息的终值口径必须显著大于漏算股息的版本')
+})

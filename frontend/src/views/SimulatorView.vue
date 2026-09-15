@@ -15,6 +15,14 @@ onMounted(() => {
 
 const r = computed(() => store.result)
 
+// 年投入总额 = 各标的每期金额之和 × 期数，让量级一眼可核对
+const annualContribution = computed(() =>
+  store.contribution_frequency === 'trading_day'
+    ? store.totalContribution * 252
+    : store.totalContribution * 12
+)
+const monthlyEquivalent = computed(() => annualContribution.value / 12)
+
 const summary = computed(() => {
   if (!r.value) return []
   const res = r.value
@@ -143,19 +151,23 @@ function savePlan() {
         <legend>全局参数</legend>
         <div class="bz-form-row">
           <label>定投频率</label>
-          <select v-model="store.contribution_frequency">
+          <select :value="store.contribution_frequency" @change="store.setFrequency($event.target.value)">
             <option value="monthly">每月一次</option>
             <option value="trading_day">每个交易日</option>
           </select>
+          <span class="bz-hint">切换会自动换算各标的金额</span>
         </div>
-        <div v-if="store.contribution_frequency === 'monthly'" class="bz-form-row">
-          <label>月定投金额（元）</label>
-          <input type="number" v-model.number="store.monthly_amount" min="1" />
+        <div class="bz-form-row">
+          <label>合计每期定投（元）</label>
+          <input type="number" :value="store.totalContribution" min="0"
+            @change="store.setTotalContribution($event.target.value)" />
+          <span class="bz-hint">＝下方各标的金额之和；改这里按比例缩放</span>
         </div>
-        <div v-else class="bz-form-row">
-          <label>每日定投金额（元）</label>
-          <input type="number" v-model.number="store.daily_amount" min="0.01" step="0.01" />
-          <span class="bz-hint">按周一至周五约 252 个交易日/年</span>
+        <div class="bz-form-row">
+          <label>年投入合计</label>
+          <span class="bz-hint" style="font-size: 12px">
+            {{ fmtMoney(annualContribution) }} 元/年 ≈ 月均 {{ fmtMoney(monthlyEquivalent) }} 元
+          </span>
         </div>
         <div class="bz-form-row">
           <label>定投总年数</label>
@@ -188,7 +200,8 @@ function savePlan() {
               {{ t.label }}
               <span v-if="t.asset.currency === 'USD'" class="bz-badge">USD</span>
               <span v-if="t.market" class="bz-hint">
-                当前市值 {{ fmtMoney(t.market.initial_value) }} 元 · 历史年化估计 {{ fmtPct(t.market.expected_return) }}
+                当前市值 {{ fmtMoney(t.market.initial_value) }} 元 ·
+                {{ t.market.expected_return_source === 'default' ? '收益率为默认假设 7%（无历史数据）' : `历史年化估计 ${fmtPct(t.market.expected_return)}` }}
               </span>
             </label>
           </div>
@@ -198,6 +211,7 @@ function savePlan() {
               <label>年化预期收益率 %</label>
               <input type="text" :value="toPctInput(store.assetParams[t.key].expected_return)"
                 @change="store.assetParams[t.key].expected_return = fromPctInput($event.target.value)" />
+              <span class="bz-hint">仅价格涨幅，不含股息（股息单独叠加）</span>
             </div>
             <div class="bz-form-row">
               <label>管理费+托管费 %</label>
@@ -246,8 +260,20 @@ function savePlan() {
                 @change="store.assetParams[t.key].subscription_fee = fromPctInput($event.target.value)" />
             </div>
             <div class="bz-form-row">
-              <label>资金权重</label>
-              <input type="number" v-model.number="store.assetParams[t.key].weight" min="0.01" step="0.5" />
+              <label>每期定投金额（元）</label>
+              <input type="number" :value="store.assetParams[t.key].dca_amount" min="0" step="100"
+                @change="store.setDcaAmount(t.key, $event.target.value)" />
+              <span class="bz-hint">
+                {{ store.contribution_frequency === 'trading_day' ? '每个交易日' : '每月' }}；0 = 只持有、不定投
+              </span>
+            </div>
+            <div class="bz-form-row">
+              <label>当前占比</label>
+              <span class="bz-hint" style="font-size: 12px">
+                {{ store.totalContribution > 0
+                  ? ((Number(store.assetParams[t.key].dca_amount) || 0) / store.totalContribution * 100).toFixed(1) + '%'
+                  : '—' }}
+              </span>
             </div>
             <details class="adv">
               <summary>赎回费阶梯（场外）</summary>
@@ -365,6 +391,35 @@ function savePlan() {
           </tr>
         </table>
 
+        <details class="adv">
+          <summary>口径说明：两列金额分别代表什么 · 各项费用含义</summary>
+          <div class="bz-note" style="font-size: 12px; line-height: 1.7">
+            <strong>两列口径</strong>
+            <ul style="margin: 4px 0 8px 18px">
+              <li><strong>名义金额</strong>：该项费用在发生时实际扣掉的现金（累加值）。</li>
+              <li><strong>终值口径</strong>：这笔钱若留在组合里本可复利到期末的价值
+                ＝ 名义金额 × (1 + 净收益率)<sup>剩余期数</sup>。也就是“到期末为止，这项费用一共让你少拿多少钱”。
+                所以越早发生的费用，终值口径相比名义金额放得越大。</li>
+            </ul>
+            <strong>各项费用含义</strong>
+            <ul style="margin: 4px 0 0 18px">
+              <li><strong>申购费/佣金</strong>：每笔买入按申购费率外扣（你付 3000，实际入场 3000×(1−费率)）。</li>
+              <li><strong>管理费+托管费</strong>：按月初市值 × 年费率 ÷ 12 逐月计提。</li>
+              <li><strong>股息预扣税</strong>：股息 × 预扣税率（美股直投约 10%、港股通 15%、QDII 10%）。</li>
+              <li><strong>买入溢价损耗</strong>：以溢价 p 买入的损失，几何口径 p/(1+p)——8% 溢价实损 7.41%，
+                不是简单的 8%（因为多付的钱本身也摊薄了份额）。</li>
+              <li><strong>现金拖累</strong>：场外联接基金必须留存的现金头寸未能参与增值的收益损耗。
+                它是<strong>机会成本</strong>，不是交给谁的显性费用。</li>
+              <li><strong>赎回费</strong>：期末卖出时按持有天数阶梯表取档计费（逐月批次分别算）。</li>
+              <li><strong>资本利得税</strong>：卖出时按 (净卖出款 − 批次成本) × 税率；亏损批次不计负数，
+                因此<strong>亏损不能抵减盈利批次的应税所得</strong>（保守口径）。</li>
+            </ul>
+            <div style="margin-top: 6px" class="bz-hint">
+              注：赎回费与资本利得税发生在期末结算时点，剩余期数为 0，故两列数值相同。
+            </div>
+          </div>
+        </details>
+
         <h2 class="bz-section">分标的明细</h2>
         <table class="bz">
           <tr>
@@ -405,6 +460,9 @@ function savePlan() {
               <td class="num">{{ fmtMoney(d.cost_lost_terminal) }}</td>
             </tr>
           </table>
+        </div>
+        <div class="bz-hint" style="margin-top: 4px">
+          前几行为「持有期内」的累计值；最后一行已计入期末卖出的赎回费与资本利得税，故与上方「费用分解 / 期末终值」口径一致。
         </div>
       </template>
 

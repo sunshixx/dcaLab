@@ -212,6 +212,24 @@ h2.bz-section {
   .portfolio-allocation-chart { width: 100%; min-width: 0; }
 }
 
+/* 分页控件 */
+.bz-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 5px 0 8px;
+  border-bottom: 1px solid #ddd;
+  margin-bottom: 10px;
+}
+.bz-pager button { padding: 1px 8px; min-width: 26px; }
+.bz-pager button.active {
+  background: #fffbcc;
+  border-color: #999;
+  font-weight: bold;
+}
+.bz-pager select { border: 1px solid #7f9db9; padding: 1px 3px; height: 21px; }
+
 /* 打印友好 */
 @media print {
   .bz-params, #bz-nav, #bz-footer { display: none; }
