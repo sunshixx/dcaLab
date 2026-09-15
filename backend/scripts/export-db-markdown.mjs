@@ -65,7 +65,7 @@ lines.push(`> 由 \`backend/scripts/export-db-markdown.mjs\` 自动生成于 ${n
 lines.push(`> 来源：\`${path.relative(ROOT, DB_PATH).replace(/\\/g, '/')}\``)
 lines.push('')
 if (!schemaOnly) {
-  lines.push('> **本文件包含个人记账数据（持仓、交易金额与日期），请勿提交到公开仓库。**')
+  lines.push('> **本文件包含真实个人记账数据（持仓、交易金额与日期）。**')
   lines.push('')
 }
 

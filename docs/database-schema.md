@@ -1,6 +1,6 @@
 # 数据库结构说明
 
-> 由 `backend/scripts/export-db-markdown.mjs` 自动生成于 2026/9/15 19:05:43（Asia/Shanghai）
+> 由 `backend/scripts/export-db-markdown.mjs` 自动生成于 2026/9/15 19:07:47（Asia/Shanghai）
 > 来源：`backend/data/app.db`
 
 ## 概览

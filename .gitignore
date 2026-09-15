@@ -14,6 +14,5 @@ dist/
 # Agent 规划/会话状态，非项目内容
 .zcode/
 
-# 数据库 Markdown 备份：含个人记账数据（持仓、金额、日期），本仓库为公开仓库，
-# 默认不入库。仅在确认仓库为私有后，用 git add -f docs/database-backup.md 显式提交。
-docs/database-backup.md
+# 数据库 Markdown 备份（docs/database-backup.md）按项目所有者要求纳入版本管理；
+# 原始 .db 文件仍由上面的规则排除。该文件含真实个人记账数据。
