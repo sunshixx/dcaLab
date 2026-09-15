@@ -78,8 +78,8 @@ export async function fundInfo(rawCode, { fresh = false } = {}) {
   }, fresh)
 }
 
-/** Provider B：历史净值（升序返回 {date, nav, acc}） */
-export async function navHistory(rawCode, { pageSize = 30, pageIndex = 1 } = {}) {
+/** Provider B：历史净值（按日期降序返回 {date, nav, acc}） */
+export async function navHistory(rawCode, { pageSize = 30, pageIndex = 1, fresh = false } = {}) {
   const code = safeCode(rawCode)
   if (!CN_CODE_RE.test(code)) return null
   return cached(`navs:${code}:${pageIndex}:${pageSize}`, TTL.navs, async () => {
@@ -98,7 +98,7 @@ export async function navHistory(rawCode, { pageSize = 30, pageIndex = 1 } = {})
       acc: Number(r.LJJZ),
       dividend_per_share: parseDividendPerShare(r.FHSP)
     }))
-  })
+  }, fresh)
 }
 
 /** 只接受明确的“每 N 份派 X 元”格式，无法确认时返回 0，不从净值变化猜分红。 */
@@ -259,12 +259,23 @@ function formatUnixSec(sec) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-export function selectValuation(info, estimate) {
+/**
+ * 选择持仓估值口径。
+ *
+ * 返回的 `date` 恒为「已公布净值日期」，作为估值的基准日——它不会因为盘中估算
+ * 是否可用而改变。盘中估算的时点单独放在 `estimateTime`。
+ *
+ * 此前把估算时点（"2026-09-15 15:00"）直接写进 date，导致同一个基金在
+ * 「估算时点」与「最近净值日期」两个日期之间来回跳动。
+ */
+export function selectValuation(latest, estimate) {
+  const hasNav = latest && Number.isFinite(latest.nav) && latest.nav > 0
+  const navDate = hasNav ? latest.nav_date || '' : ''
   if (estimate && Number.isFinite(estimate.estimated_nav) && estimate.estimated_nav > 0) {
-    return { nav: estimate.estimated_nav, date: estimate.as_of || '', source: '盘中估算' }
+    return { nav: estimate.estimated_nav, date: navDate, estimateTime: estimate.as_of || '', source: '盘中估算' }
   }
-  if (info && Number.isFinite(info.nav) && info.nav > 0) {
-    return { nav: info.nav, date: info.nav_date || '', source: '最近净值' }
+  if (hasNav) {
+    return { nav: latest.nav, date: navDate, estimateTime: '', source: '最近净值' }
   }
   return null
 }
@@ -314,17 +325,25 @@ export async function fundSnapshot(rawCode, { fresh = false, date = '' } = {}) {
       valuation_source: navRow ? '历史净值' : null
     }
   }
-  const [info, est, quote] = await Promise.all([
+  const [info, est, quote, navs] = await Promise.all([
     fundInfo(code, { fresh }).catch(() => null),
     fundEstimate(code, { fresh }),
-    etfQuote(code, { fresh })
+    etfQuote(code, { fresh }),
+    // 最新净值一律以「历史净值」接口为准（F10 专用接口，实测多轮返回一致）。
+    // 搜索联想接口 fundsuggest 是多节点缓存的低优先级服务，同一代码会在相邻
+    // 两个净值日之间回吐不同快照，这正是持仓日期跳动的根因。
+    // 传 fresh 让「刷新」能立刻拿到刚公布的净值（该接口已实测稳定）。
+    navHistory(code, { pageSize: 5, pageIndex: 1, fresh }).catch(() => null)
   ])
+  const navRow = (navs || []).find((row) => row.nav > 0) || null
+  // 历史净值接口不可用时才退回搜索接口的净值
+  const latest = navRow ? { nav: navRow.nav, nav_date: navRow.date } : info
   const validQuote = quote && info && sameInstrumentName(info.name, quote.name) ? quote : null
-  const valuation = selectValuation(info, est)
+  const valuation = selectValuation(latest, est)
   return {
     code,
     found: !!info,
-    info,
+    info: info && latest !== info ? { ...info, nav: latest?.nav ?? info.nav, nav_date: latest?.nav_date ?? info.nav_date } : info,
     market: validQuote ? 'CN_ETF' : 'CN_FUND',
     currency: 'CNY',
     quote_price: validQuote?.price ?? null,
@@ -332,6 +351,7 @@ export async function fundSnapshot(rawCode, { fresh = false, date = '' } = {}) {
     // 持仓按基金单位净值估值；场内成交价不能替代场外基金单位净值。
     valuation_nav: valuation ? valuation.nav : null,
     valuation_date: valuation ? valuation.date : '',
+    estimate_time: valuation ? valuation.estimateTime || '' : '',
     valuation_source: valuation ? valuation.source : null
   }
 }

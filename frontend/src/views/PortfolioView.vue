@@ -130,7 +130,8 @@ const assetTypeName = (type) => ASSET_TYPE_CN[type] || '基金'
               <td>{{ h.nav_premium_rate == null ? '—' : fmtPct(h.nav_premium_rate) }}</td>
               <td>
                 <span class="bz-badge">{{ h.valuation_source || '—' }}</span>
-                <span v-if="h.nav_date" class="bz-hint">{{ h.nav_date }}</span>
+                <span v-if="h.nav_date" class="bz-hint">净值日 {{ h.nav_date }}</span>
+                <span v-if="h.estimate_time" class="bz-hint">· 估算 {{ h.estimate_time }}</span>
               </td>
             </tr>
             <tr v-if="!store.holdings.length">

@@ -318,6 +318,7 @@ r.get('/holdings', async (req, res) => {
         latest_nav: nav,
         market_price: snap.quote_price,
         nav_date: snap.valuation_date,
+        estimate_time: snap.estimate_time || '',
         valuation_source: snap.valuation_source,
         nav_premium_rate: h.buy_premium_rate,
         currency: snap.currency || 'CNY',
