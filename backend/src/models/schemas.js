@@ -40,6 +40,10 @@ export const assetSchema = z.object({
   redemption_fee_tiers: redemptionTiersSchema,
   // 0 表示“只作为存量持仓、不参与定投分配”（公积金/现金流等一次性标的）
   weight: z.number().min(0).max(100).default(1),
+  // 现金占净比（0~1）。场内 ETF 的真实现金头寸，可由东财资产配置接口取得。
+  // 现金部分不参与市场增值，故拖累 = cash_ratio × expected_return，与下面手填的
+  // cash_drag（场外联接的固定年化损耗）叠加。
+  cash_ratio: z.number().min(0).max(1).default(0),
   initial_value: z.number().min(0).max(1e12).default(0),
   initial_cost: z.number().min(0).max(1e12).default(0),
   initial_investment: z.number().min(0).max(1e12).default(0)
@@ -57,8 +61,9 @@ export const globalSchema = z.object({
 export const calculateSchema = z
   .object({
     monthly_amount: z.number().min(1).max(10_000_000),
-    contribution_frequency: z.enum(['monthly', 'trading_day']).default('monthly'),
+    contribution_frequency: z.enum(['monthly', 'trading_day', 'yearly']).default('monthly'),
     daily_amount: z.number().min(0.01).max(1_000_000).optional(),
+    yearly_amount: z.number().min(0.01).max(100_000_000).optional(),
     years: z.number().int().min(1).max(50),
     assets: z.array(assetSchema).min(1).max(6),
     global: globalSchema.default({})
@@ -67,6 +72,10 @@ export const calculateSchema = z
     // 缺 daily_amount 时按交易日频率会把月金额当每日金额投入（放大 252 倍），必须显式报错
     if (v.contribution_frequency === 'trading_day' && !(v.daily_amount > 0)) {
       ctx.addIssue({ code: 'custom', path: ['daily_amount'], message: '按交易日定投必须提供每日定投金额 daily_amount' })
+    }
+    // 同理：按年定投缺 yearly_amount 会把月金额当年金额（缩水 12 倍）
+    if (v.contribution_frequency === 'yearly' && !(v.yearly_amount > 0)) {
+      ctx.addIssue({ code: 'custom', path: ['yearly_amount'], message: '按年定投必须提供每年定投金额 yearly_amount' })
     }
   })
 

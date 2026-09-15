@@ -101,6 +101,54 @@ export async function navHistory(rawCode, { pageSize = 30, pageIndex = 1, fresh 
   }, fresh)
 }
 
+/** Provider F：基金资产配置（股票/债券/现金占净比），用于真实计算场内现金拖累
+ *
+ *  数据源：东方财富移动端基金接口 FundMNAssetAllocation
+ *  字段：FSRQ 报告期、GP 股票占净比%、ZQ 债券占净比%、HB 现金占净比%、
+ *        QT 其他占净比%、JZC 净资产（亿元）
+ *  返回最新一期（按报告期降序取首条），比率统一转成 0~1 小数。
+ */
+export async function fundAssetAllocation(rawCode, { fresh = false } = {}) {
+  const code = safeCode(rawCode)
+  if (!CN_CODE_RE.test(code)) return null
+  return cached(`alloc:${code}`, TTL.navs, async () => {
+    const url =
+      'https://fundmobapi.eastmoney.com/FundMNewApi/FundMNAssetAllocation' +
+      `?FCODE=${encodeURIComponent(code)}&deviceid=1&plat=Android&product=EFund&version=6.0.0&appType=ttjj`
+    const res = await fetchWithTimeout(url, { headers: {
+      // 该接口是移动端 App 专用：实测带桌面 Chrome UA 会被拒（ErrCode 61136403「网络繁忙」），
+      // 必须伪装成移动端或使用默认 UA。
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15',
+      Referer: 'https://fund.eastmoney.com/'
+    } })
+    if (!res.ok) throw new Error(`资产配置接口 HTTP ${res.status}`)
+    const json = await res.json()
+    const list = Array.isArray(json?.Datas) ? json.Datas : []
+    if (!list.length) return null
+    const pct = (v) => {
+      const n = Number(v)
+      return Number.isFinite(n) ? n / 100 : null
+    }
+    // 接口按报告期降序返回，取最新一期
+    const rows = [...list].sort((a, b) => String(b.FSRQ || '').localeCompare(String(a.FSRQ || '')))
+    const latest = rows[0]
+    return {
+      code,
+      as_of: latest.FSRQ || '',
+      stock_ratio: pct(latest.GP),
+      bond_ratio: pct(latest.ZQ),
+      cash_ratio: pct(latest.HB), // ← 场内现金拖累的真实依据
+      other_ratio: pct(latest.QT),
+      net_assets_yi: latest.JZC === '--' ? null : Number(latest.JZC),
+      history: rows.slice(0, 8).map((r) => ({
+        as_of: r.FSRQ || '',
+        stock_ratio: pct(r.GP), bond_ratio: pct(r.ZQ), cash_ratio: pct(r.HB)
+      })),
+      source: '东方财富基金资产配置'
+    }
+  }, fresh)
+}
+
 /** 只接受明确的“每 N 份派 X 元”格式，无法确认时返回 0，不从净值变化猜分红。 */
 export function parseDividendPerShare(raw) {
   const text = String(raw || '').replace(/\s/g, '')

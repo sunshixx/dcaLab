@@ -1,6 +1,6 @@
 <script setup>
 // 模拟器：左参数面板 / 右结果区（汇总表 + 图表 + 费用分解 + 逐年数据）
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useCalcStore } from '../stores/calcStore.js'
 import { fmtMoney, fmtWan, fmtPct, toPctInput, fromPctInput } from '../fmt.js'
 import ChartBox from '../components/ChartBox.vue'
@@ -15,13 +15,38 @@ onMounted(() => {
 
 const r = computed(() => store.result)
 
-// 年投入总额 = 各标的每期金额之和 × 期数，让量级一眼可核对
-const annualContribution = computed(() =>
-  store.contribution_frequency === 'trading_day'
-    ? store.totalContribution * 252
-    : store.totalContribution * 12
+// 年投入总额 = 各标的每期金额之和 × 该频率每年期数，让量级一眼可核对
+const FREQ_UNIT = { monthly: '月', trading_day: '个交易日', yearly: '年' }
+const PERIODS_PER_YEAR = { trading_day: 252, monthly: 12, yearly: 1 }
+
+const annualContribution = computed(
+  () => store.totalContribution * (PERIODS_PER_YEAR[store.contribution_frequency] || 12)
 )
 const monthlyEquivalent = computed(() => annualContribution.value / 12)
+
+// ── 场内现金拖累：拉取基金真实资产配置（现金占净比） ──
+const cashLoading = ref({})
+const cashInfo = ref({})
+async function fetchCashRatio(key) {
+  const code = store.catalog.find((c) => c.key === key)?.market?.code || key
+  if (!/^\d{6}$/.test(code)) {
+    cashInfo.value = { ...cashInfo.value, [key]: '仅支持 6 位中国基金代码' }
+    return
+  }
+  cashLoading.value = { ...cashLoading.value, [key]: true }
+  try {
+    const alloc = await store.fetchCashRatio(key, code)
+    const pct = (v) => (v == null ? '—' : (v * 100).toFixed(2) + '%')
+    cashInfo.value = {
+      ...cashInfo.value,
+      [key]: `报告期 ${alloc.as_of}：股票 ${pct(alloc.stock_ratio)} · 现金 ${pct(alloc.cash_ratio)}（净资产 ${alloc.net_assets_yi ?? '—'} 亿）`
+    }
+  } catch (e) {
+    cashInfo.value = { ...cashInfo.value, [key]: `查询失败：${e.message}` }
+  } finally {
+    cashLoading.value = { ...cashLoading.value, [key]: false }
+  }
+}
 
 const summary = computed(() => {
   if (!r.value) return []
@@ -154,11 +179,12 @@ function savePlan() {
           <select :value="store.contribution_frequency" @change="store.setFrequency($event.target.value)">
             <option value="monthly">每月一次</option>
             <option value="trading_day">每个交易日</option>
+            <option value="yearly">每年一次</option>
           </select>
           <span class="bz-hint">切换会自动换算各标的金额</span>
         </div>
         <div class="bz-form-row">
-          <label>合计每期定投（元）</label>
+          <label>合计每{{ FREQ_UNIT[store.contribution_frequency] }}定投（元）</label>
           <input type="number" :value="store.totalContribution" min="0"
             @change="store.setTotalContribution($event.target.value)" />
           <span class="bz-hint">＝下方各标的金额之和；改这里按比例缩放</span>
@@ -222,6 +248,16 @@ function savePlan() {
               <label>现金拖累 %（场外联接）</label>
               <input type="text" :value="toPctInput(store.assetParams[t.key].cash_drag)"
                 @change="store.assetParams[t.key].cash_drag = fromPctInput($event.target.value)" />
+            </div>
+            <div class="bz-form-row">
+              <label>现金占净比 %（场内真实）</label>
+              <input type="text" :value="toPctInput(store.assetParams[t.key].cash_ratio || 0)"
+                @change="store.assetParams[t.key].cash_ratio = fromPctInput($event.target.value)" />
+              <button style="padding: 1px 6px" :disabled="cashLoading[t.key]"
+                @click="fetchCashRatio(t.key)">{{ cashLoading[t.key] ? '查询中…' : '查真实数据' }}</button>
+            </div>
+            <div class="bz-hint" style="margin-left: 154px">
+              {{ cashInfo[t.key] || '现金部分不参与增值：拖累 = 占比 × 预期收益率' }}
             </div>
             <div class="bz-form-row">
               <label>股息率 %</label>
@@ -408,8 +444,10 @@ function savePlan() {
               <li><strong>股息预扣税</strong>：股息 × 预扣税率（美股直投约 10%、港股通 15%、QDII 10%）。</li>
               <li><strong>买入溢价损耗</strong>：以溢价 p 买入的损失，几何口径 p/(1+p)——8% 溢价实损 7.41%，
                 不是简单的 8%（因为多付的钱本身也摊薄了份额）。</li>
-              <li><strong>现金拖累</strong>：场外联接基金必须留存的现金头寸未能参与增值的收益损耗。
-                它是<strong>机会成本</strong>，不是交给谁的显性费用。</li>
+              <li><strong>现金拖累</strong>：两部分叠加 —— ①「现金拖累 %」为场外联接基金的固定年化损耗（手填）；
+                ②「现金占净比 %」按<strong>场内基金真实现金头寸</strong>计算，拖累 = 占比 × 预期收益率
+                （现金部分不参与市场增值）。后者可点「查真实数据」从东财资产配置接口取得
+                （报告期披露的 HB 值），它是<strong>机会成本</strong>，不是交给谁的显性费用。</li>
               <li><strong>赎回费</strong>：期末卖出时按持有天数阶梯表取档计费（逐月批次分别算）。</li>
               <li><strong>资本利得税</strong>：卖出时按 (净卖出款 − 批次成本) × 税率；亏损批次不计负数，
                 因此<strong>亏损不能抵减盈利批次的应税所得</strong>（保守口径）。</li>

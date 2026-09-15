@@ -11,8 +11,13 @@
 //    (1+avg_buy_premium)——那样会重复计提买入溢价；avg_buy_premium 仅作信息输出。
 // 4. 股息税拖累：每期股息 = 当期持仓市值 × dividend_yield/12，
 //    预扣 dividend_tax_rate，税后净额按当期净值再投资（基金分红除权处理）。
-// 5. 现金拖累：场外联接基金留有现金头寸，等价于年化 cash_drag 的
-//    增长率损耗（从月增长中直接扣减，与净额法一致）。
+// 5. 现金拖累：由两部分组成（见 effectiveDrag）
+//    a) cash_drag：场外联接基金的固定年化损耗（手填）
+//    b) cash_ratio × expected_return：场内 ETF 真实现金占净比的机会成本，
+//       cash_ratio 可由东财「基金资产配置」接口取得的 HB（现金占净比）填入
+// 5b. 定投频率：monthly（12 期/年）、trading_day（252 期/年）、yearly（1 期/年）。
+//     三种频率的金额字段相互独立（monthly_amount / daily_amount / yearly_amount），
+//     缺失即报错，避免把别的频率的金额误用成本频率金额。
 // 6. 管理费/托管费：按月初资产市值的 fee/12 逐月计提（基金按日计提的
 //    月度近似，行业通行简化）。
 // 7. 费用的复利机会成本（“真实成本”终值口径）：
@@ -86,6 +91,14 @@ function effectivePremiumMonths(p) {
   return p.premium_months
 }
 
+// 有效现金拖累（年化）：
+//   手填部分  cash_drag        —— 场外联接保留现金头寸的固定损耗
+//   真实部分  cash_ratio × 收益率 —— 场内 ETF 的真实现金占净比不参与市场增值
+//                                 （现金报酬按 0 计，偏保守）
+function effectiveDrag(p) {
+  return p.cash_drag + p.expected_return * (p.cash_ratio || 0)
+}
+
 function redemptionRateFor(tiers, days) {
   if (!tiers || tiers.length === 0) return 0
   for (const t of tiers) {
@@ -97,7 +110,7 @@ function redemptionRateFor(tiers, days) {
 /**
  * 核心模拟：单次确定性推演（不含三情景，三情景由 simulateWithScenarios 复用本函数）
  */
-export function simulate({ monthly_amount, daily_amount, contribution_frequency = 'monthly', years, assets, global }) {
+export function simulate({ monthly_amount, daily_amount, yearly_amount, contribution_frequency = 'monthly', years, assets, global }) {
   const g = {
     exchange_rate: 7.0,
     fx_drift: 0,
@@ -108,13 +121,20 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
     ...global
   }
   const frequency = contribution_frequency
-  // 按交易日定投缺 daily_amount 时，绝不能回退用 monthly_amount（会把投入放大 252 倍）
+  // 每种频率都必须显式提供自己的金额，否则会把别的频率的金额当成本频率金额
+  // （按交易日误用月金额 → 放大 252 倍；按年误用月金额 → 缩水 12 倍）
   if (frequency === 'trading_day' && !(daily_amount > 0)) {
     throw new Error('按交易日定投必须提供 daily_amount（每个交易日的定投金额）')
   }
-  const periodsPerYear = frequency === 'trading_day' ? 252 : 12
+  if (frequency === 'yearly' && !(yearly_amount > 0)) {
+    throw new Error('按年定投必须提供 yearly_amount（每年的定投金额）')
+  }
+  const periodsPerYear = frequency === 'trading_day' ? 252 : frequency === 'yearly' ? 1 : 12
   const periodsPerMonth = periodsPerYear / 12
   const periods = years * periodsPerYear
+  // 每期投入金额
+  const perPeriodAmount =
+    frequency === 'trading_day' ? daily_amount : frequency === 'yearly' ? yearly_amount : monthly_amount
 
   // 汇率：m = 已过月数；第 t 月的买入发生在已过 (t-1) 个月时点
   const fx = (period) => g.exchange_rate * Math.pow(1 + g.fx_drift, period / periodsPerYear)
@@ -133,7 +153,7 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
     const dyNet = st.params.dividend_yield * (1 - st.params.dividend_tax_rate)
     const rNet =
       (1 + st.params.expected_return) * (1 + dyNet) - 1 -
-      st.params.management_fee - st.params.cash_drag
+      st.params.management_fee - effectiveDrag(st.params)
     // 复利期数必须与 remaining 的时间单位一致：
     //   monthly      → periodsPerYear=12  → 月利率，remaining 为月数
     //   trading_day  → periodsPerYear=252 → 日利率，remaining 为交易日数
@@ -170,7 +190,8 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
     const V0 = st.V
     const gm = Math.pow(1 + p.expected_return, 1 / periodsPerYear) - 1
     const mgmt = (V0 * p.management_fee) / periodsPerYear
-    const drag = (V0 * p.cash_drag) / periodsPerYear
+    // 现金拖累 = 手填年化损耗 + 真实现金头寸的机会成本
+    const drag = (V0 * effectiveDrag(p)) / periodsPerYear
     const grown = V0 * (1 + gm)
     // 有机增长净费用（用于批次等比缩放）
     const organic = grown - mgmt - drag
@@ -196,13 +217,18 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
   for (let t = 1; t <= periods; t++) {
     for (let i = 0; i < states.length; i++) {
       const st = states[i]
-      const contribution = frequency === 'trading_day' ? daily_amount : monthly_amount
       // 权重即“每个标的自己的每期金额”时，wSum 是各标金额之和；全部为 0 时不投任何标的
-      const c = wSum > 0 ? (contribution * st.params.weight) / wSum : 0
+      const c = wSum > 0 ? (perPeriodAmount * st.params.weight) / wSum : 0
       const p = st.params
       const effPM = effectivePremiumMonths(p)
-      // 溢价窗口按“月”计：trading_day 频率下 t 是交易日序号，先折算成已过月数
-      const monthIndex = Math.ceil(t / periodsPerMonth)
+      // 溢价窗口按“月”计，需把期序号折算成「已过月数」：
+      //   按月   t 即月序号            → ceil(t / 1) = t
+      //   按日   21 个交易日为一个月   → ceil(t / 21)
+      //   按年   第 t 年的投入发生在第 (t-1)*12+1 个月
+      // 此前统一用 ceil(t / periodsPerMonth)，按年时会算成 ceil(t×12)，
+      // 使第一笔年投被判为“第 12 个月”，首月溢价窗口永远失效。
+      const monthIndex =
+        frequency === 'yearly' ? (t - 1) * 12 + 1 : Math.ceil(t / periodsPerMonth)
       const premActive = monthIndex <= effPM
       const divert =
         g.enable_dynamic_switch && premActive && p.buy_premium > g.premium_threshold
@@ -254,7 +280,11 @@ export function simulate({ monthly_amount, daily_amount, contribution_frequency 
     let taxableGain = 0
     for (const lot of st.lots) {
         const periodsHeld = periods - lot.month + 1
-        const days = frequency === 'trading_day' ? periodsHeld * 365 / 252 : periodsHeld * 30.4375
+        // 持有天数按频率换算：trading_day 期=交易日、yearly 期=年、monthly 期=月
+        const days =
+          frequency === 'trading_day' ? periodsHeld * 365 / 252
+          : frequency === 'yearly' ? periodsHeld * 365.25
+          : periodsHeld * 30.4375
       const rate = redemptionRateFor(p.redemption_fee_tiers, days)
       const lotGross = lot.value * sellFactor
       redemptionFee += lotGross * rate

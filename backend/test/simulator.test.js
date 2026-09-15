@@ -404,3 +404,101 @@ test('终值口径折现率包含税后股息再投资', () => {
   for (let t = 1; t <= N; t++) t2 += Math.pow(1 + rNetNoDiv, (N - t) / 12)
   assert.ok(expected > t2 / nominal * 1.005, '含股息的终值口径必须显著大于漏算股息的版本')
 })
+
+// ── 按年定投 ──
+test('按年定投：每年投入一次，总投入 = 年金额 × 年数', () => {
+  const res = simulate({
+    monthly_amount: 1,
+    yearly_amount: 36000,
+    contribution_frequency: 'yearly',
+    years: 20,
+    assets: [baseAsset({ expected_return: 0 })],
+    global: baseGlobal
+  })
+  assert.equal(res.total_investment, 720000, '36000 × 20 = 720000')
+  assert.equal(res.final_value, 720000, 'r=0 时终值等于投入')
+  assert.equal(res.yearly_data.length, 20)
+  assert.equal(res.yearly_data[0].year, 1)
+})
+
+test('按年定投缺 yearly_amount 时抛错', () => {
+  assert.throws(
+    () => simulate({ monthly_amount: 3000, contribution_frequency: 'yearly', years: 10, assets: [baseAsset()], global: baseGlobal }),
+    /yearly_amount/
+  )
+})
+
+// 每年初一次性投入 vs 每月初分批投入：同样年投入下，年投资金平均早约 5.5 个月入场，
+// 故终值应略高于月投，但幅度有限（约半年复利）。
+test('按年定投终值略高于同额按月定投（资金入场更早）', () => {
+  const yearly = simulate({
+    monthly_amount: 1, yearly_amount: 36000, contribution_frequency: 'yearly',
+    years: 20, assets: [baseAsset({ expected_return: 0.07 })], global: baseGlobal
+  })
+  const monthly = simulate({
+    monthly_amount: 3000, contribution_frequency: 'monthly',
+    years: 20, assets: [baseAsset({ expected_return: 0.07 })], global: baseGlobal
+  })
+  assert.equal(yearly.total_investment, monthly.total_investment)
+  const ratio = yearly.final_value / monthly.final_value
+  assert.ok(ratio > 1 && ratio < 1.1, `年/月终值比=${ratio} 应在 1~1.1 之间`)
+})
+
+test('按年定投的赎回费持有天数按年换算（不误用月换算）', () => {
+  // 3 年、每年 10000，r=0；赎回费仅对「持有 <1 年」的批次生效。
+  // 期末卖出时最早批次持有 3 年、最晚批次持有 1 年，均不 <1 年，故赎回费应为 0。
+  // 若误用「×30.4375 天/月」换算，年投批次会被算成只有 30 天，从而错误计费。
+  const res = simulate({
+    monthly_amount: 1, yearly_amount: 10000, contribution_frequency: 'yearly', years: 3,
+    assets: [baseAsset({ redemption_fee_tiers: [{ max_days: 365, rate: 0.01 }, { max_days: null, rate: 0 }] })],
+    global: baseGlobal
+  })
+  assert.equal(res.cost_breakdown.redemption_fees, 0, '所有批次持有均 ≥1 年，不应产生赎回费')
+  assert.equal(res.final_value, 30000)
+})
+
+// ── 真实现金拖累：cash_ratio × 预期收益率 ──
+test('现金占净比按 占比×收益率 计入现金拖累', () => {
+  const r = 0.08
+  const ratio = 0.0405 // 沪深300ETF 2026-06-30 披露的现金占净比
+  const res = simulate({
+    monthly_amount: 1000, years: 5,
+    assets: [baseAsset({ expected_return: r, cash_ratio: ratio })],
+    global: baseGlobal
+  })
+  const drag = res.cost_breakdown.cash_drag_loss
+  assert.ok(drag > 0, `应有现金拖累，实际 ${drag}`)
+  assert.ok(drag < 3000, `拖累不应过大，实际 ${drag}`)
+  // 与手填 cash_drag 叠加生效
+  const both = simulate({
+    monthly_amount: 1000, years: 5,
+    assets: [baseAsset({ expected_return: r, cash_drag: 0.005, cash_ratio: ratio })],
+    global: baseGlobal
+  })
+  assert.ok(both.cost_breakdown.cash_drag_loss > drag, '手填与真实拖累应叠加')
+})
+
+test('现金占净比为 0 时不产生现金拖累', () => {
+  const res = simulate({
+    monthly_amount: 1000, years: 5,
+    assets: [baseAsset({ expected_return: 0.08, cash_ratio: 0 })],
+    global: baseGlobal
+  })
+  assert.equal(res.cost_breakdown.cash_drag_loss, 0)
+})
+
+test('终值口径折现率包含现金拖累（拖累越大倍数越小）', () => {
+  const noDrag = simulate({
+    monthly_amount: 1000, years: 10,
+    assets: [baseAsset({ expected_return: 0.08, management_fee: 0.005, cash_ratio: 0 })],
+    global: baseGlobal
+  })
+  const withDrag = simulate({
+    monthly_amount: 1000, years: 10,
+    assets: [baseAsset({ expected_return: 0.08, management_fee: 0.005, cash_ratio: 0.18 })],
+    global: baseGlobal
+  })
+  const m0 = noDrag.total_cost_terminal / noDrag.total_cost
+  const m1 = withDrag.total_cost_terminal / withDrag.total_cost
+  assert.ok(m1 < m0, `含现金拖累的终值倍数 ${m1} 应小于无拖累的 ${m0}`)
+})

@@ -110,6 +110,8 @@ function cloneTemplate() {
 
 // 一个月的交易日数（252/12），用于「月投 ↔ 日投」金额换算
 export const TRADING_DAYS_PER_MONTH = 21
+// 各定投频率的每年期数，用于频率间金额换算（保持年投入总额不变）
+export const PERIODS_PER_YEAR = { trading_day: 252, monthly: 12, yearly: 1 }
 const round2 = (x) => Math.round(x * 100) / 100
 
 export const useCalcStore = defineStore('calc', {
@@ -167,16 +169,28 @@ export const useCalcStore = defineStore('calc', {
         this.assetParams[k].dca_amount = v
       })
     },
-    // 切换定投频率时逐标的换算金额：月投 1500 ≈ 日投 71.43（21 交易日/月）。
-    // 若只改频率不换算，总投入会静默变成 2.1 倍。
+    // 切换定投频率时逐标的换算金额，保持「年投入总额」不变。
+    // 若只改频率不换算，总投入会静默变化（日投↔月投差 21 倍，月投↔年投差 12 倍）。
     setFrequency(freq) {
       if (freq === this.contribution_frequency) return
-      const factor = freq === 'trading_day' ? 1 / TRADING_DAYS_PER_MONTH : TRADING_DAYS_PER_MONTH
+      const fromPPY = PERIODS_PER_YEAR[this.contribution_frequency] || 12
+      const toPPY = PERIODS_PER_YEAR[freq] || 12
+      const factor = fromPPY / toPPY
       for (const k of Object.keys(this.assetParams)) {
         const cur = Number(this.assetParams[k].dca_amount) || 0
         this.assetParams[k].dca_amount = round2(cur * factor)
       }
       this.contribution_frequency = freq
+    },
+    // 拉取基金真实资产配置，把「现金占净比」写进标的参数（用于真实计算现金拖累）
+    async fetchCashRatio(key, code) {
+      const p = this.assetParams[key]
+      if (!p) return null
+      const alloc = await api(`/market/fund/${code}/allocation?refresh=1`)
+      p.cash_ratio = Number(alloc.cash_ratio) || 0
+      p.cash_ratio_as_of = alloc.as_of || ''
+      p.cash_ratio_stock = Number(alloc.stock_ratio) || 0
+      return alloc
     },
     buildPayload() {
       // 把每个标的的「每期定投金额」归一化成占比（0~1）作为 weight，
@@ -188,11 +202,14 @@ export const useCalcStore = defineStore('calc', {
         const amount = Number(p.dca_amount) || 0
         return { ...p, weight: total > 0 ? amount / total : 0 }
       })
-      const isDaily = this.contribution_frequency === 'trading_day'
+      const freq = this.contribution_frequency
+      const isDaily = freq === 'trading_day'
+      const isYearly = freq === 'yearly'
       return {
-        monthly_amount: isDaily ? 1 : Math.max(1, total),
-        contribution_frequency: this.contribution_frequency,
+        monthly_amount: isDaily || isYearly ? 1 : Math.max(1, total),
+        contribution_frequency: freq,
         daily_amount: isDaily ? Math.max(0.01, total) : 0.01,
+        yearly_amount: isYearly ? Math.max(0.01, total) : 0.01,
         years: Number(this.years),
         assets,
         global: {
