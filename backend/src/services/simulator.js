@@ -99,6 +99,26 @@ function effectiveDrag(p) {
   return p.cash_drag + p.expected_return * (p.cash_ratio || 0)
 }
 
+/**
+ * 把「历史净值净收益」还原成模拟器所需的「毛收益」。
+ *
+ * 基金的公布净值已是扣过管理费/托管费、且embed 了真实现金拖累的净收益；
+ * 而模拟器把 expected_return 当毛收益，会再扣一次费率与现金拖累。
+ * 故按 净 = 毛×(1−现金占比) − 费率 反解：
+ *     毛 = (净 + 费率) / (1 − 现金占比)
+ * 这样模拟器扣完后恰好回到历史净收益，不会重复计提。
+ *
+ * @param {number} netReturn   历史净值年化净收益
+ * @param {number} feeRate     管理费+托管费（年化）
+ * @param {number} cashRatio   现金占净比（0~1）
+ */
+export function grossUpNetReturn(netReturn, feeRate, cashRatio) {
+  const ratio = Number.isFinite(cashRatio) ? Math.min(Math.max(cashRatio, 0), 0.99) : 0
+  const net = Number(netReturn) || 0
+  const fee = Number(feeRate) || 0
+  return (net + fee) / Math.max(1e-6, 1 - ratio)
+}
+
 function redemptionRateFor(tiers, days) {
   if (!tiers || tiers.length === 0) return 0
   for (const t of tiers) {

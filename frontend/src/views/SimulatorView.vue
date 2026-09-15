@@ -248,6 +248,7 @@ function savePlan() {
               <label>现金拖累 %（场外联接）</label>
               <input type="text" :value="toPctInput(store.assetParams[t.key].cash_drag)"
                 @change="store.assetParams[t.key].cash_drag = fromPctInput($event.target.value)" />
+              <span class="bz-hint">场外专用：固定年化损耗</span>
             </div>
             <div class="bz-form-row">
               <label>现金占净比 %（场内真实）</label>
@@ -257,7 +258,12 @@ function savePlan() {
                 @click="fetchCashRatio(t.key)">{{ cashLoading[t.key] ? '查询中…' : '查真实数据' }}</button>
             </div>
             <div class="bz-hint" style="margin-left: 154px">
-              {{ cashInfo[t.key] || '现金部分不参与增值：拖累 = 占比 × 预期收益率' }}
+              {{ cashInfo[t.key] || (store.assetParams[t.key].cash_ratio_as_of
+                ? `场内专用：拖累 = 占比 × 毛收益（报告期 ${store.assetParams[t.key].cash_ratio_as_of}）`
+                : '场内专用：拖累 = 占比 × 毛收益') }}
+            </div>
+            <div class="bz-hint" style="margin-left: 154px; color: #039">
+              场内用「现金占净比」，场外联接用「现金拖累」；两者可同时填，会叠加。
             </div>
             <div class="bz-form-row">
               <label>股息率 %</label>

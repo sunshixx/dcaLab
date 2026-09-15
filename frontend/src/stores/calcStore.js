@@ -288,6 +288,11 @@ export const useCalcStore = defineStore('calc', {
             buy_premium: item.buy_premium_rate || 0,
             premium_months: item.buy_premium_rate > 0 ? 1 : 0,
             weight: 1,
+            // 真实现金占净比：后端已按 毛=(净+费率)/(1−现金占比) 反解过毛收益，
+            // 这里必须沿用同一个占比，否则管理费与现金拖累会被重复计提。
+            cash_ratio: Number(item.cash_ratio) || 0,
+            cash_ratio_as_of: item.cash_ratio_as_of || '',
+            net_return_history: item.net_return_history ?? null,
             dca_amount: sumSuggested > 0 ? suggested[i] : fallbackEach
           },
           market: item

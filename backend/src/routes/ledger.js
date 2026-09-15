@@ -3,7 +3,8 @@ import { Router } from 'express'
 import { sql } from '../models/db.js'
 import { fundSchema, transactionSchema, importCsvSchema } from '../models/schemas.js'
 import { computeHoldings, portfolioXirr, exportCsv, parseImportCsv, sharesForBuy, nearbyDividendExists, sharesStillValidAfterRemoval } from '../services/bookkeeping.js'
-import { fundSnapshot, navHistorySince, usdcnyRate } from '../services/marketData.js'
+import { grossUpNetReturn } from '../services/simulator.js'
+import { fundSnapshot, navHistorySince, usdcnyRate, fundAssetAllocation } from '../services/marketData.js'
 import { calculateReverseRepo, isChinaBusinessDay, REPO_TERMS } from '../services/chinaFixedIncome.js'
 
 const r = Router()
@@ -248,9 +249,13 @@ r.get('/simulation-context', async (_req, res) => {
   const assets = await Promise.all(holdings.map(async (h) => {
     const fund = funds.get(h.fund_code)
     const manual = MANUAL_ASSET_TYPES.has(fund?.asset_type)
-    const [snapshot, history] = await Promise.all([
+    const [snapshot, history, allocation] = await Promise.all([
       manual ? Promise.resolve({ info: { name: fund.name }, currency: 'CNY' }) : fundSnapshot(h.fund_code, { fresh: true }),
-      manual ? Promise.resolve([]) : navHistorySince(h.fund_code, sinceDate).catch(() => [])
+      manual ? Promise.resolve([]) : navHistorySince(h.fund_code, sinceDate).catch(() => []),
+      // 真实现金占净比（用于把历史净收益还原成毛收益，并供模拟器扣现金拖累）
+      manual || !/^\d{6}$/.test(h.fund_code)
+        ? Promise.resolve(null)
+        : fundAssetAllocation(h.fund_code).catch(() => null)
     ])
     const first = history.find((row) => row.nav > 0)
     const last = [...history].reverse().find((row) => row.nav > 0)
@@ -267,6 +272,13 @@ r.get('/simulation-context', async (_req, res) => {
         : snapshot.currency === 'USD'
           ? h.avg_cost / (fxRate || 7.1)
           : h.avg_cost
+    const feeRate = (fund?.management_fee || 0) + (fund?.custody_fee || 0)
+    // 历史净值收益率是「已扣管理费/托管费、也已扣现金拖累」的净收益，
+    // 而模拟器会把 expected_return 当作毛收益再扣一次费用与现金拖累。
+    // 故此处按 净 = 毛×(1−现金占比) − 费率 反解出毛收益，避免重复计提：
+    //   毛 = (净 + 费率) / (1 − 现金占比)
+    const cashRatio = isManual ? 0 : (allocation?.cash_ratio || 0)
+    const grossReturn = annualReturn == null ? 0.07 : grossUpNetReturn(annualReturn, feeRate, cashRatio)
     return {
       code: h.fund_code,
       name: snapshot.info?.name || funds.get(h.fund_code)?.name || h.fund_code,
@@ -279,9 +291,14 @@ r.get('/simulation-context', async (_req, res) => {
       initial_value: Math.max(0, h.shares * nav),
       initial_cost: Math.max(0, h.total_cost / (fxRate || 1)),
       initial_investment: Math.max(0, h.total_cost),
-      expected_return: isManual ? 0 : annualReturn == null ? 0.07 : Math.max(-0.5, Math.min(0.5, annualReturn)),
+      // 收益率统一为「毛收益」（指数/市场层面），模拟器再扣费率与现金拖累
+      expected_return: isManual ? 0 : Math.max(-0.5, Math.min(0.5, grossReturn)),
       expected_return_source: isManual ? 'manual' : annualReturn == null ? 'default' : 'history',
-      management_fee: (fund?.management_fee || 0) + (fund?.custody_fee || 0),
+      net_return_history: annualReturn, // 供前端展示：该基金历史净收益
+      management_fee: feeRate,
+      // 真实现金占净比（取自基金定期报告），供模拟器扣现金拖累
+      cash_ratio: cashRatio,
+      cash_ratio_as_of: allocation?.as_of || '',
       subscription_fee: fund?.subscription_fee || 0,
       redemption_fee_tiers: parseTiers(fund?.redemption_fee_tiers),
       buy_premium_rate: h.buy_premium_rate ?? 0,

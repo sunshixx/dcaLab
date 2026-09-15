@@ -1,7 +1,7 @@
 // 模拟引擎单元测试：全部用可手工推导的闭式/已知结果校验
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { simulate, simulateWithScenarios } from '../src/services/simulator.js'
+import { simulate, simulateWithScenarios, grossUpNetReturn } from '../src/services/simulator.js'
 
 const baseAsset = (over = {}) => ({
   name: '测试标的',
@@ -501,4 +501,57 @@ test('终值口径折现率包含现金拖累（拖累越大倍数越小）', ()
   const m0 = noDrag.total_cost_terminal / noDrag.total_cost
   const m1 = withDrag.total_cost_terminal / withDrag.total_cost
   assert.ok(m1 < m0, `含现金拖累的终值倍数 ${m1} 应小于无拖累的 ${m0}`)
+})
+
+// ── 回归：历史净值净收益 → 毛收益 的反解，避免费用重复计提 ──
+// 基金公布净值已是「扣过管理费、且已 embed 现金拖累」的净收益；
+// 模拟器把 expected_return 当毛收益再扣一次，故必须先反解成毛收益。
+test('毛收益反解：扣回费率与现金拖累后恰好还原历史净收益', () => {
+  const cases = [
+    { net: 0.09, fee: 0.008, cash: 0.0382 },  // 天弘标普500 实际参数
+    { net: 0.09, fee: 0.01, cash: 0.181 },    // 国泰纳指100 实际参数（现金占比很高）
+    { net: 0.06, fee: 0.002, cash: 0 },       // 无现金拖累
+    { net: -0.1, fee: 0.005, cash: 0.05 }     // 负收益
+  ]
+  for (const c of cases) {
+    const gross = grossUpNetReturn(c.net, c.fee, c.cash)
+    // 模拟器的还原路径：净 = 毛×(1−现金占比) − 费率
+    const back = gross * (1 - c.cash) - c.fee
+    assert.ok(Math.abs(back - c.net) < 1e-9,
+      `net=${c.net} fee=${c.fee} cash=${c.cash} → gross=${gross} 还原=${back}`)
+  }
+})
+
+test('毛收益反解：现金占比 0 时仅加回费率', () => {
+  assert.ok(Math.abs(grossUpNetReturn(0.07, 0.008, 0) - 0.078) < 1e-12)
+  // 现金占比越大，需要的毛收益越高（因为要从毛收益里扣掉现金部分的拖累）
+  const low = grossUpNetReturn(0.09, 0.008, 0.02)
+  const high = grossUpNetReturn(0.09, 0.008, 0.18)
+  assert.ok(high > low, `现金占比高时毛收益应更高：${high} > ${low}`)
+})
+
+test('毛收益反解：异常现金占比被钳制，不产生除零或负分母', () => {
+  assert.ok(Number.isFinite(grossUpNetReturn(0.09, 0.008, 1)))   // 100% 现金
+  assert.ok(Number.isFinite(grossUpNetReturn(0.09, 0.008, -0.5))) // 负值
+  assert.ok(Number.isFinite(grossUpNetReturn(0.09, 0.008, NaN)))
+  assert.ok(grossUpNetReturn(0.09, 0.008, 1) < 108) // 不会爆炸
+})
+
+// 端到端：用反解出的毛收益跑一遍，净增长应约等于历史净收益
+test('端到端：反解毛收益 + 模拟器扣费 = 历史净收益', () => {
+  const net = 0.09, fee = 0.008, cash = 0.0382
+  const gross = grossUpNetReturn(net, fee, cash)
+  const withFees = simulate({
+    monthly_amount: 0, years: 5,
+    assets: [baseAsset({ expected_return: gross, management_fee: fee, cash_ratio: cash, initial_value: 10000, initial_cost: 10000 })],
+    global: baseGlobal
+  })
+  const noFees = simulate({
+    monthly_amount: 0, years: 5,
+    assets: [baseAsset({ expected_return: net, initial_value: 10000, initial_cost: 10000 })],
+    global: baseGlobal
+  })
+  // 两者终值应接近（差异只来自逐月复利与算术/几何口径的微小不同）
+  const diff = Math.abs(withFees.final_value - noFees.final_value) / noFees.final_value
+  assert.ok(diff < 0.01, `反解后终值应接近历史净收益结果：含费=${withFees.final_value} 无费=${noFees.final_value} 偏差=${(diff * 100).toFixed(3)}%`)
 })
