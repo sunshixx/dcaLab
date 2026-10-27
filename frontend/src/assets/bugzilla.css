@@ -174,6 +174,7 @@ details.adv { margin-top: 4px; border-top: 1px dotted #bbb; padding-top: 4px; }
   font-weight: bold;
   font-size: 12px;
   padding: 3px 8px;
+  color: #000;
 }
 .chart-box .chart-body { height: 330px; }
 
@@ -234,4 +235,141 @@ h2.bz-section {
 @media print {
   .bz-params, #bz-nav, #bz-footer { display: none; }
   .bz-results { width: 100%; }
+}
+
+/* ── 目标配置页 ───────────────────────────────────────────
+   保持 2000s Bugzilla 语言：细边框、灰表头、实色进度条、无圆角无渐变。 */
+.allocation-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 6px 0 10px;
+}
+.allocation-toolbar .toolbar-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.allocation-toolbar .stamp { color: #666; font-size: 11px; }
+
+.allocation-summary { margin-top: 0; }
+.allocation-summary .big { font-size: 15px; }
+
+.allocation-overall { margin: 8px 0 12px; }
+
+/* 实色 + 细斜纹的复古进度条 */
+.allocation-progress {
+  display: inline-block;
+  width: 120px;
+  height: 11px;
+  border: 1px solid #777;
+  background: #fff;
+  vertical-align: middle;
+  overflow: hidden;
+}
+.allocation-progress i {
+  display: block;
+  height: 100%;
+  background-color: #4a7ebb;
+  background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, .22) 0 1px, transparent 1px 5px);
+}
+.allocation-progress i.full { background-color: #9bbb59; }
+.allocation-progress i.over { background-color: #c0504d; }
+.allocation-progress.large { display: block; width: 100%; height: 18px; }
+.allocation-progress-text { margin-left: 6px; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+.allocation-table-wrap { overflow-x: auto; }
+table.allocation-table { min-width: 1060px; }
+table.allocation-table td.allocation-category { cursor: default; }
+table.allocation-table td.allocation-category.clickable { cursor: pointer; }
+.allocation-cat-toggle { color: #039; font-size: 10px; margin-right: 3px; }
+table.bz tr.allocation-group-row td { background: #efefef; font-weight: bold; }
+table.bz tr.allocation-total-row td { background: #dcdcdc; font-weight: bold; }
+table.bz tr.allocation-member-row td { background: #fafafa; font-size: 11px; color: #444; }
+
+.allocation-need { color: #666; }
+.allocation-over { color: #c00; }
+.allocation-under { color: #060; }
+.allocation-ok { color: #060; }
+
+/* 编辑态 */
+.allocation-editor input[type="text"],
+.allocation-editor input[type="number"] {
+  border: 1px solid #7f9db9;
+  font: 12px Verdana;
+  padding: 2px 4px;
+  background: #fff;
+}
+.allocation-input-name { width: 110px; }
+.allocation-input-group { width: 100px; }
+.allocation-input-ratio { width: 64px; text-align: right; }
+.allocation-edit-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: -6px 0 16px;
+}
+.allocation-check { display: inline-block; margin-right: 16px; }
+
+/* 归类弹窗 */
+.bz-modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); z-index: 200; }
+.bz-modal {
+  position: fixed;
+  top: 6vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(860px, 94vw);
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #666;
+  box-shadow: 3px 3px 0 #999;
+  z-index: 201;
+}
+.bz-modal .modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: #dcdcdc;
+  border-bottom: 1px solid #999;
+  font-weight: bold;
+  font-size: 12px;
+}
+.bz-modal .modal-body { padding: 8px 10px; overflow: auto; }
+.bz-modal .modal-foot { padding: 5px 8px; border-top: 1px solid #999; background: #f7f7f7; text-align: right; }
+.allocation-fund-table { margin: 4px 0 0; }
+
+/* 再平衡弹窗 */
+.bz-modal.rebalance-modal { width: min(1040px, 96vw); }
+.rebalance-tabs { margin: 2px 0 8px; }
+.rebalance-tabs button { padding: 2px 12px; margin-right: 4px; }
+.rebalance-tabs button.active { background: #fffbcc; border-color: #999; font-weight: bold; }
+.rebalance-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.rebalance-table-wrap { overflow-x: auto; }
+table.rebalance-table { min-width: 900px; margin: 4px 0 8px; font-size: 12px; }
+table.rebalance-table tr.rebalance-hold td { color: #666; }
+table.rebalance-table tr.rebalance-member-row td { background: #fafafa; font-size: 11px; }
+.rebalance-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 6px 0 2px;
+  font-size: 12px;
+}
+.rebalance-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.rebalance-foot .bz-ok, .rebalance-foot .bz-note { margin: 0; }
+
+@media (max-width: 900px) {
+  .allocation-toolbar { align-items: flex-start; }
+  .allocation-summary { display: block; overflow-x: auto; }
+  .allocation-summary tr { white-space: nowrap; }
 }

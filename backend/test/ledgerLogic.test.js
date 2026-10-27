@@ -20,6 +20,31 @@ test('现金分红降低净投入但不改变当前持仓成本', () => {
   assert.equal(h.dividend_cash_total, 20)
 })
 
+test('累计投入本金：现金分红不扣本金，分红再投资也不重复计入', () => {
+  const [cash] = computeHoldings([
+    { fund_code: '000001', type: 'buy', amount: 1000, fee: 0, nav: 1, shares: 1000 },
+    { fund_code: '000001', type: 'dividend_cash', amount: 20, fee: 0, nav: 0, shares: 0 }
+  ])
+  // 收益率口径的净投入会扣分红，但目标配置用的「累计投入本金」不扣
+  assert.equal(cash.invested, 980)
+  assert.equal(cash.deployed, 1000)
+
+  const [reinvest] = computeHoldings([
+    { fund_code: '000002', type: 'buy', amount: 1000, fee: 0, nav: 1, shares: 1000 },
+    { fund_code: '000002', type: 'dividend_reinvest', amount: 20, fee: 0, nav: 1, shares: 20 }
+  ])
+  assert.equal(reinvest.invested, 1000)
+  assert.equal(reinvest.deployed, 1000)
+  assert.equal(reinvest.shares, 1020)
+
+  const [sold] = computeHoldings([
+    { fund_code: '000003', type: 'buy', amount: 1000, fee: 0, nav: 1, shares: 1000 },
+    { fund_code: '000003', type: 'sell', amount: 600, fee: 0, nav: 1, shares: 500 }
+  ])
+  assert.equal(sold.invested, 400)
+  assert.equal(sold.deployed, 400)
+})
+
 test('组合 XIRR：期末市值与现金分红均作为流入，买入按实际扣款流出', () => {
   const r = portfolioXirr(
     [

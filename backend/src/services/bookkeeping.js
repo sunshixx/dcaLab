@@ -45,7 +45,8 @@ export function computeHoldings(txs) {
         realized_pl: 0,
         dividend_cash_total: 0,
         dividend_reinvest_total: 0,
-        invested: 0, // 累计净投入（买入含费 − 卖出到手）
+        invested: 0, // 累计净投入（买入含费 − 卖出到手 − 现金分红）
+        deployed: 0, // 累计投入本金（买入含费 + 费用调整 − 卖出到手；不扣现金分红）
         contributed: 0, // 累计实际投入（买入/费用调整，不扣除卖出和分红）
         buy_count: 0,
         sell_count: 0,
@@ -66,6 +67,7 @@ export function computeHoldings(txs) {
         h.premium_shares += sharesForBuy(tx)
         h.premium_recorded = h.premium_recorded || tx.premium_rate != null
         h.invested += amountCny(tx)
+        h.deployed += amountCny(tx)
         h.contributed += amountCny(tx)
         h.buy_count++
         break
@@ -91,6 +93,7 @@ export function computeHoldings(txs) {
           h.premium_shares -= removedShares
         }
         h.invested -= proceeds
+        h.deployed -= proceeds
         h.sell_count++
         break
       }
@@ -101,6 +104,7 @@ export function computeHoldings(txs) {
       case 'fee':
         h.total_cost += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
         h.invested += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
+        h.deployed += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
         h.contributed += amountCny(tx, tx.fee > 0 ? tx.fee : tx.amount)
         break
     }

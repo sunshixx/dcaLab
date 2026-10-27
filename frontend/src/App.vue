@@ -5,12 +5,13 @@
 <template>
   <div id="bz-header">
     <div class="logo">DCA</div>
-    <div class="tagline">长期定投 · 收益与成本模拟 · 记账本</div>
+    <div class="tagline">长期定投 · 目标配置 · 收益与成本模拟 · 记账本</div>
   </div>
   <div id="bz-nav">
+    <router-link to="/">目标配置</router-link>
     <router-link to="/portfolio">持仓概览</router-link>
     <router-link to="/ledger">记账本</router-link>
-    <router-link to="/">模拟器</router-link>
+    <router-link to="/simulator">模拟器</router-link>
     <router-link to="/compare">方案对比</router-link>
     <router-link to="/review">市场复盘</router-link>
   </div>

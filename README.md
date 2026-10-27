@@ -6,6 +6,16 @@
 
 ## 功能
 
+**⓪ 目标配置（首页）**
+
+- 输入计划总金额与各大类目标比例（宽基 / 中长债 / 短债 / 黄金 / 大宗商品 / 现金，可自由增删改），自动换算每类目标金额
+- 从记账本读取每类真实累计投入本金（含费买入 − 卖出到手，不扣现金分红；分红再投资不重复计入），生成每类投入完成度、还需投入 / 超配金额
+- 实时估值：当前市值、资金占比、配置偏离、按当前市值的再平衡差额（正数减仓、负数补仓）
+- 再平衡方案：按当前已归类市值生成「增配 / 减配」清单，或只用新增资金补低配（只买不卖）；可展开到基金明细并复制清单
+- 行情每 60 秒自动刷新，也可手动强制刷新；记账本新增交易后自动反映
+- 公积金、现金流按资产类型统一计入「现金」；国债默认归「中长债」，可在页面改到「短债」；未归类标的单独提醒
+- 页面可直接编辑比例、分组、类别名称、关联标的，保存到 SQLite
+
 **① 模拟器**（左侧参数面板 / 右侧结果区）
 
 - 月定投金额、年限、多标的（标普500 / 纳指100 / 红利低波 / 沪深300-A500）按权重拆分
@@ -70,11 +80,15 @@ npm run db:migrate
 所有业务数据都在 `backend/data/app.db`：
 
 ```text
-plans              定投方案
-funds              基金信息
-transactions       交易流水
-reports            报告摘要、新闻、行情审计、payload、HTML 和缓存失效时间
-schema_migrations  已执行的 SQL migration 版本
+plans                    定投方案
+allocation_plans         目标配置计划（总金额）
+allocation_items         目标配置类别（比例、分组）
+allocation_item_funds    类别 ↔ 记账本标的（手工指定）
+allocation_item_types    类别 ↔ 资产类型（公积金/国债/逆回购/现金流自动归入）
+funds                    基金信息
+transactions             交易流水
+reports                  报告摘要、新闻、行情审计、payload、HTML 和缓存失效时间
+schema_migrations        已执行的 SQL migration 版本
 ```
 
 报告生成过程中仍会在 `reports/` 写入 Skill 所需的中间 JSON 和 HTML 文件；接口读取报告时优先从 SQLite 返回，文件用于生成过程和兼容备份。
@@ -159,6 +173,8 @@ docker compose up --build
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
+| GET/PUT | `/api/allocation/plan` | 读取/保存目标配置（总金额、类别比例、类别-标的映射） |
+| GET | `/api/allocation/overview[?refresh=1]` | 计划 vs 实际：完成度、缺口、实时市值占比、再平衡差额 |
 | POST | `/api/calculate` | 定投模拟（含三情景），请求/响应见下方示例 |
 | GET/POST/DELETE | `/api/plans[/:id]` | 方案保存/加载/删除 |
 | GET/POST/DELETE | `/api/ledger/funds[/:code]` | 记账本基金（POST 留空 name 自动查询） |
@@ -202,25 +218,31 @@ docker compose up --build
 9. **实际购买力**：`final / (1+inflation)^years`。
 10. **XIRR**：解 `Σ CF_i/(1+x)^(d_i/365) = 0`（Excel XIRR 同定义），牛顿迭代，失败退化为二分。
 11. **动态切换**：开启后，当月若标的处于溢价窗口且 `buy_premium > premium_threshold`，该月资金全额转入溢出桶（默认沪深300 参数），按其自身收益率复利。
+12. **目标配置口径**：目标金额 = 计划总金额 × 目标比例；完成度 = 累计投入本金 / 目标金额（累计投入本金 = 含费买入 + 费用调整 − 卖出到手，**不扣现金分红**；分红再投资是基金内部再投入，不重复计入本金）；资金占比 = 当前市值 / **已归类**持仓市值；配置偏离 = 资金占比 − 目标比例；再平衡差额 = 当前市值 − 目标比例 × **已归类**持仓市值（未归类资金不参与占比和再平衡）。国债/债基按用户的类别映射归入中长债或短债；公积金、现金流按资产类型归入现金。
 
 ## 目录结构
 
 ```
 backend/
-  src/routes/        calculate / plans / ledger / market
-  src/services/      simulator（模拟引擎） bookkeeping（成本/XIRR/CSV） marketData（行情）
+  src/routes/        calculate / plans / ledger / market / allocation
+  src/services/      simulator（模拟引擎） bookkeeping（成本/XIRR/CSV）
+                     allocation（目标配置计算） ledgerData（流水/自动分红再投）
+                     marketData（行情）
   src/models/        schemas（zod 校验） db（node:sqlite，全参数绑定）
-  test/              14 个已知结果用例
+  test/              已知结果用例（模拟器/记账/目标配置/校验）
 frontend/
-  src/views/         Simulator / Ledger / Portfolio / Compare
+  src/views/         Allocation / Simulator / Ledger / Portfolio / Compare / MarketReview
   src/stores/        calcStore / ledgerStore（Pinia）
-  src/components/    ChartBox（ECharts 复古主题）
+  src/components/    ChartBox（ECharts 复古主题） ProgressBar（复古进度条）
   src/assets/        bugzilla.css（复古样式）
 ```
 
 ## 已知限制（诚实的边界）
 
 - 确定性模型，不含波动/回撤路径（蒙特卡洛留作 V2）；收益率是假设，不是预测。
+- 目标配置的完成度完全依赖记账本录入完整性：没记的交易不会出现在「实际投入」里；未归类标的只计入总投入，不计入任何类别。
+- 目标配置的实时期望值来自东财公开接口（净值/盘中估算/场内价），接口失败时退回成本价并在明细标注；公积金、现金流按手工记录的 1 元单位净值计算。
+- 「再平衡方案」按已归类持仓的当前市值静态计算，未考虑赎回费、溢价、税费和最小交易单位；未归类资金不参与再平衡。
 - 盘中单位净值估算依赖东方财富公开接口，可能有反爬或延迟；失败时自动降级为最近已公布净值并在页面标注。场内交易价不作为基金持仓的单位净值估值。
 - 记账买入金额按账户实际扣款记录，手续费包含在内；自动计算份额时按（实际扣款 − 手续费）÷ 确认净值计算，成本按实际扣款计入。
 - 管理费按月近似（真实基金按日计提）；赎回费持有天数按 30.4375 天/月近似。

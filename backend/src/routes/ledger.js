@@ -2,66 +2,20 @@
 import { Router } from 'express'
 import { sql } from '../models/db.js'
 import { fundSchema, transactionSchema, importCsvSchema } from '../models/schemas.js'
-import { computeHoldings, portfolioXirr, exportCsv, parseImportCsv, sharesForBuy, nearbyDividendExists, sharesStillValidAfterRemoval } from '../services/bookkeeping.js'
+import { computeHoldings, portfolioXirr, exportCsv, parseImportCsv, sharesForBuy, sharesStillValidAfterRemoval } from '../services/bookkeeping.js'
 import { grossUpNetReturn } from '../services/simulator.js'
 import { fundSnapshot, navHistorySince, usdcnyRate, fundAssetAllocation } from '../services/marketData.js'
 import { calculateReverseRepo, isChinaBusinessDay, REPO_TERMS } from '../services/chinaFixedIncome.js'
+import {
+  MANUAL_ASSET_TYPES,
+  loadTxs,
+  addAutomaticReinvestments,
+  latestManualPrice,
+  parseTiers,
+  parseFundProfile
+} from '../services/ledgerData.js'
 
 const r = Router()
-const MANUAL_ASSET_TYPES = new Set(['provident_fund', 'treasury_bond', 'reverse_repo', 'cash_flow'])
-
-const loadTxs = (fundCode) =>
-  (fundCode
-    ? sql.all('SELECT * FROM transactions WHERE fund_code = ? ORDER BY date ASC, id ASC', fundCode)
-    : sql.all('SELECT * FROM transactions ORDER BY date ASC, id ASC')
-  ).map((tx) =>
-    tx.type === 'buy' || tx.type === 'dividend_reinvest' ? { ...tx, shares: sharesForBuy(tx) } : tx
-  )
-
-async function addAutomaticReinvestments(txs) {
-  const codes = [...new Set(txs.filter((tx) => tx.type === 'buy').map((tx) => tx.fund_code))]
-    .filter((code) => {
-      const fund = sql.get('SELECT asset_type FROM funds WHERE code = ?', code)
-      return !fund || fund.asset_type === 'fund'
-    })
-  const histories = await Promise.all(
-    codes.map(async (code) => ({ code, rows: await navHistorySince(code, txs.filter((tx) => tx.fund_code === code)[0].date).catch(() => []) }))
-  )
-  const result = chronological(txs)
-  let syntheticId = -1
-  const events = histories
-    .flatMap(({ code, rows }) => rows.filter((row) => row.dividend_per_share > 0).map((row) => ({ ...row, fund_code: code })))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.fund_code.localeCompare(b.fund_code))
-  for (const event of events) {
-    // 除息日与手动记账的到账日常差几天，±7 天内已有分红记录即视为同一笔
-    const hasExplicitDividend = nearbyDividendExists(result, event.fund_code, event.date, 7)
-    if (hasExplicitDividend || event.nav <= 0) continue
-    const before = result.filter((tx) => tx.fund_code === event.fund_code && tx.date < event.date)
-    const holding = computeHoldings(before).find((row) => row.fund_code === event.fund_code)
-    if (!holding || holding.shares <= 0) continue
-    const amount = holding.shares * event.dividend_per_share
-    result.push({
-      id: syntheticId--,
-      fund_code: event.fund_code,
-      date: event.date,
-      type: 'dividend_reinvest',
-      amount,
-      nav: event.nav,
-      shares: amount / event.nav,
-      fee: 0,
-      currency: 'CNY',
-      fx_rate: 1,
-      note: '自动分红再投资',
-      auto_reinvest: true
-    })
-    result.sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0))
-  }
-  return result
-}
-
-function chronological(txs) {
-  return [...txs].sort((a, b) => a.date.localeCompare(b.date) || (a.id || 0) - (b.id || 0))
-}
 
 // 卖出可行性校验基于「数据库流水 + 自动分红再投」的完整份额（持仓页展示的就是这个口径，
 // 否则合成的再投份额看得见却卖不掉）。离线时 addAutomaticReinvestments 降级为原始流水。
@@ -556,24 +510,6 @@ r.post('/import.csv', async (req, res) => {
 
 function round2(x) {
   return Math.round(x * 100) / 100
-}
-
-function latestManualPrice(txs, code) {
-  const latest = [...txs].reverse().find((tx) => tx.fund_code === code && (tx.price > 0 || tx.nav > 0))
-  return latest ? latest.price || latest.nav : 1
-}
-
-function parseTiers(raw) {
-  try {
-    const tiers = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw
-    return Array.isArray(tiers) ? tiers : []
-  } catch {
-    return []
-  }
-}
-
-function parseFundProfile(row) {
-  return { ...row, redemption_fee_tiers: parseTiers(row.redemption_fee_tiers) }
 }
 
 async function calculateRedemptionFee(fundCode, sell, tiers) {

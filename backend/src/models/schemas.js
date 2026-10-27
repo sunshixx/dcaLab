@@ -158,3 +158,63 @@ export const transactionSchema = z
 export const importCsvSchema = z.object({
   csv: z.string().min(1).max(2_000_000)
 })
+
+// ── 目标配置（计划比例 + 类别标的映射）──────────────────────
+// 只允许手工类资产按类型自动归入；基金必须逐个指定代码，避免整类误归。
+export const ALLOCATION_AUTO_TYPES = ['provident_fund', 'treasury_bond', 'reverse_repo', 'cash_flow']
+
+export const allocationItemSchema = z.object({
+  name: z.string().trim().min(1, '类别名称不能为空').max(20),
+  ratio: z.number().min(0).max(1),
+  group_name: z.string().trim().max(20).default(''),
+  fund_codes: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,20}$/)).max(50).default([]),
+  asset_types: z.array(z.enum(ALLOCATION_AUTO_TYPES)).max(4).default([])
+})
+
+export const allocationPlanSchema = z
+  .object({
+    name: z.string().trim().min(1).max(40).default('目标配置'),
+    total_amount: z.number().min(0).max(1e10),
+    items: z.array(allocationItemSchema).min(1).max(30)
+  })
+  .superRefine((plan, ctx) => {
+    const sum = plan.items.reduce((total, item) => total + item.ratio, 0)
+    if (Math.abs(sum - 1) > 1e-4) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['items'],
+        message: `比例合计必须为 100%（当前 ${(sum * 100).toFixed(2)}%）`
+      })
+    }
+    const names = new Set()
+    const fundOwners = new Map()
+    const typeOwners = new Map()
+    plan.items.forEach((item, index) => {
+      if (names.has(item.name)) {
+        ctx.addIssue({ code: 'custom', path: ['items', index, 'name'], message: `类别名称重复：${item.name}` })
+      }
+      names.add(item.name)
+      for (const code of item.fund_codes) {
+        if (fundOwners.has(code)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['items', index, 'fund_codes'],
+            message: `标的 ${code} 不能同时归入「${fundOwners.get(code)}」和「${item.name}」`
+          })
+        } else {
+          fundOwners.set(code, item.name)
+        }
+      }
+      for (const type of item.asset_types) {
+        if (typeOwners.has(type)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['items', index, 'asset_types'],
+            message: `资产类型 ${type} 不能同时自动归入「${typeOwners.get(type)}」和「${item.name}」`
+          })
+        } else {
+          typeOwners.set(type, item.name)
+        }
+      }
+    })
+  })
