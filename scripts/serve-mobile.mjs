@@ -3,11 +3,13 @@
 // 后端复用策略：3001 上已经有服务（比如你正在跑 npm run dev）就直接用，
 // 没有再自己起一个，避免端口冲突导致"预览页一片空白"。
 //
-// 另外会在 4180 起一个纯 HTTP 的小服务，只为把根证书发给手机安装
-// （HTTP 是为了不弹"不安全"提示，装完证书就再也不用了）。
+// 另外在 4180 起一个"HTTP/HTTPS 双协议"的小服务，只为把根证书发给手机安装。
+// 双协议是因为部分 Safari 版本会把 http:// 强制升级成 https://，只跑 HTTP 会
+// 报"无法与服务器建立安全连接"。
 import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
+import https from 'node:https'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
@@ -18,14 +20,15 @@ const PORT = 4173
 const CA_PORT = 4180
 const API_PORT = 3001
 const certDir = path.join(root, 'frontend', '.cert')
+const distDir = path.join(root, 'frontend', 'dist')
 
 const lanIps = Object.values(os.networkInterfaces())
   .flat()
   .filter((item) => item && item.family === 'IPv4' && !item.internal)
   .map((item) => item.address)
 
-const https = fs.existsSync(path.join(certDir, 'cert.pem'))
-const scheme = https ? 'https' : 'http'
+const hasCert = fs.existsSync(path.join(certDir, 'cert.pem'))
+const scheme = hasCert ? 'https' : 'http'
 const hostForPhone = lanIps[0] || 'localhost'
 
 function portInUse(port) {
@@ -66,22 +69,34 @@ function shutdown() {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-// ── 证书分发（仅 HTTPS 模式下需要）────────────────────────────
-if (https) {
+// ── 证书分发 ────────────────────────────────────────────────
+if (hasCert) {
+  // 同时放进 dist，这样 4173 站点也能直接下载（多一条备用路径）
+  for (const name of ['ca.crt', 'ca.mobileconfig']) {
+    const src = path.join(certDir, name)
+    if (fs.existsSync(src) && fs.existsSync(distDir)) {
+      fs.copyFileSync(src, path.join(distDir, name))
+    }
+  }
+
   const files = {
     '/ca.crt': { file: 'ca.crt', type: 'application/x-x509-ca-cert' },
     '/ca.mobileconfig': { file: 'ca.mobileconfig', type: 'application/x-apple-aspen-config' }
   }
-  const server = http.createServer((req, res) => {
+
+  const handler = (req, res) => {
     const pathname = (req.url || '/').split('?')[0]
     if (pathname === '/') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
       res.end(
-        '<meta name="viewport" content="width=device-width,initial-scale=1"><body style="font:16px/1.6 -apple-system,sans-serif;padding:24px">' +
+        '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+          '<body style="font:16px/1.7 -apple-system,sans-serif;padding:24px;max-width:560px">' +
           '<h2>DCA-Lab 证书安装</h2>' +
-          '<p><a href="/ca.mobileconfig">iOS：下载描述文件</a></p>' +
+          '<p style="color:#666;font-size:14px">装一次，之后访问不再提示证书问题。</p>' +
+          '<p><a href="/ca.mobileconfig">iPhone：下载描述文件</a></p>' +
           '<p><a href="/ca.crt">Android：下载 CA 证书</a></p>' +
-          '<p style="color:#666;font-size:14px">装完即可免警告访问，之后这个页面不用再打开。</p></body>'
+          '<p style="color:#666;font-size:13px;margin-top:24px">装完即可关闭本页。</p>' +
+          '</body>'
       )
       return
     }
@@ -100,9 +115,31 @@ if (https) {
       'Content-Disposition': `attachment; filename="${entry.file}"`
     })
     fs.createReadStream(full).pipe(res)
+  }
+
+  // 同一个端口同时接受明文 HTTP 和 TLS：按首字节是否为 TLS 握手（0x16）分流
+  const httpServer = http.createServer(handler)
+  const httpsServer = https.createServer(
+    {
+      key: fs.readFileSync(path.join(certDir, 'key.pem')),
+      cert: fs.readFileSync(path.join(certDir, 'cert.pem'))
+    },
+    handler
+  )
+  // 注意：必须用 'readable' + read() 取首字节；用 'data' 事件会把已消费的数据丢掉，
+  // 导致 TLS 握手收不到 ClientHello（表现为“无法与服务器建立安全连接”）。
+  const sniffer = net.createServer((socket) => {
+    socket.setTimeout(15_000, () => socket.destroy())
+    socket.once('readable', () => {
+      const chunk = socket.read()
+      if (!chunk) return
+      const target = chunk[0] === 0x16 ? httpsServer : httpServer
+      socket.unshift(chunk)
+      target.emit('connection', socket)
+    })
   })
-  server.listen(CA_PORT, '0.0.0.0')
-  children.push(server)
+  sniffer.listen(CA_PORT, '0.0.0.0')
+  children.push(sniffer, httpServer, httpsServer)
 }
 
 if (!apiRunning) {
@@ -117,12 +154,16 @@ run('npm', ['--prefix', 'frontend', 'run', 'preview'], root)
 const lines = ['', '手机模式已启动：', `  电脑：${scheme}://localhost:${PORT}`]
 for (const ip of lanIps) lines.push(`  手机：${scheme}://${ip}:${PORT}`)
 lines.push('')
-if (https) {
-  lines.push('如果手机第一次访问提示证书不受信任（只需处理一次）：')
-  lines.push(`  1) 手机浏览器打开  http://${hostForPhone}:${CA_PORT}/`)
-  lines.push('  2) iOS：安装描述文件 → 设置 → 通用 → 关于本机 → 证书信任设置 → 打开开关')
-  lines.push('     Android：下载 ca.crt → 设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书')
-  lines.push('  3) 之后重新打开上面的 https 地址，不会再提示')
+if (hasCert) {
+  lines.push('手机第一次访问会提示证书不受信任（只需处理一次）：')
+  lines.push(`  A. 浏览器打开  http://${hostForPhone}:${CA_PORT}/`)
+  lines.push(`     （若提示“无法建立安全连接”，改开 https://${hostForPhone}:${CA_PORT}/ 并选择继续访问）`)
+  lines.push(`  B. iOS：安装描述文件 → 设置 → 通用 → 关于本机 → 证书信任设置 → 打开 DCA-Lab Local CA`)
+  lines.push(`     Android：下载 ca.crt → 设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书`)
+  lines.push(`  C. 回到 ${scheme}://${hostForPhone}:${PORT}，不再提示`)
+  lines.push('')
+  lines.push(`  备用（4180 打不开时）：${scheme}://${hostForPhone}:${PORT}/ca.crt`)
+  lines.push('    iOS 也可用该地址下载，若 Safari 显示成文本，请以 4180 入口为准。')
 } else {
   lines.push('当前是 HTTP（没有证书）：不会有任何警告，但 Android 无法“安装应用”')
   lines.push('想要可安装的 PWA，运行 npm run mobile:https')
