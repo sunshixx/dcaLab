@@ -52,11 +52,10 @@ npm run init
 ```
 
 `npm run init` 会安装根目录、backend、frontend 依赖，创建 `.env.local`，并配置默认规则代理 `http://127.0.0.1:7897`。代理端口不可用时只会提示警告，不会阻止安装。
-```bash
+
 ### 2. 启动开发环境
 
 先确认 VPN 软件已开启 HTTP/Mixed 代理端口 `7897`，然后：
-把生成的 `my-backup.db` 通过 U 盘、网盘或局域网复制到新电脑项目根目录后执行：
 
 ```bash
 npm run dev
@@ -74,6 +73,40 @@ npm run db:migrate
 ```
 
 数据库启动时会自动执行 migration；`db:migrate` 可以手动重复执行，已执行的版本不会重复运行。
+
+## 手机使用（PWA）
+
+桌面端保持原样：手机版样式只在 ≤700px 生效，同一个前端会自动切成单列布局，并且可以“安装”到手机主屏幕。
+
+### 方式一：局域网直接访问（最快）
+
+```bash
+npm run dev
+# 手机与电脑连同一个 Wi-Fi，浏览器打开 http://<电脑局域网IP>:5173
+ipconfig getifaddr en0   # macOS 查本机 IP
+```
+
+- **iOS Safari**：分享 → 添加到主屏幕。HTTP 也能用，启动后全屏、没有地址栏。
+- **Android Chrome**：菜单 → 添加到主屏幕。HTTP 下只是快捷方式，打开仍在浏览器标签里。
+
+### 方式二：HTTPS 安装（Android 上拿到完整 PWA）
+
+浏览器只允许在 HTTPS（或 localhost）下注册 Service Worker，手机通过局域网 IP 访问是 HTTP，所以要用自签证书：
+
+```bash
+npm run mobile:https     # 生成证书 → 构建 → 起预览服务
+```
+
+手机访问 `https://<电脑IP>:4173`，证书警告点“继续访问”（自签证书，只在本机用）。
+之后 Chrome 会提示“安装应用”，桌面上出现图标：全屏启动、断网也能打开界面（数据仍实时从电脑取）。
+
+> 证书在 `frontend/.cert/`（已 gitignore），只在 `npm run mobile` 的 preview 服务启用；`npm run dev` 的开发服务器仍是 HTTP，桌面端完全不受影响。
+
+### 说明
+
+- **PWA 只是外壳**：数据仍在你电脑的 `backend/data/app.db`，手机相当于远程界面，电脑关机就连不上。
+- Service Worker **只缓存界面外壳**；`/api` 请求永不缓存，避免记账数据读到旧值。
+- 页面在手机上不会整页左右滑动；宽表格（交易流水、目标配置明细）各自在容器内横滑。
 
 ## 数据与迁移
 
@@ -236,7 +269,8 @@ frontend/
   src/views/         Allocation / Simulator / Ledger / Portfolio / Compare / MarketReview
   src/stores/        calcStore / ledgerStore（Pinia）
   src/components/    ChartBox（ECharts 复古主题） ProgressBar（复古进度条）
-  src/assets/        bugzilla.css（复古样式）
+  src/assets/        bugzilla.css（复古样式）、mobile.css（≤700px 手机端增强）
+  public/            manifest.webmanifest、sw.js、图标（PWA）
 ```
 
 ## 已知限制（诚实的边界）

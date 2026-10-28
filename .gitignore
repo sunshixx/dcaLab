@@ -16,3 +16,6 @@ dist/
 
 # 数据库 Markdown 备份（docs/database-backup.md）按项目所有者要求纳入版本管理；
 # 原始 .db 文件仍由上面的规则排除。该文件含真实个人记账数据。
+
+# 手机模式的自签 HTTPS 证书（本机生成，不入库）
+frontend/.cert/

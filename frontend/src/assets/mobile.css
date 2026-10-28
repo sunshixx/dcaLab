@@ -1,0 +1,167 @@
+/* ── 移动端增强 ────────────────────────────────────────────
+   只在窄屏（≤700px）生效，桌面端的样式一个字都不改。
+   目标：手机上能单手操作、能横向看宽表、能加到主屏幕当 app 用。 */
+
+@media (max-width: 700px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+    overscroll-behavior-y: none;
+  }
+
+  body { font-size: 14px; }
+
+  /* 顶部标题条：收窄，不让它吃掉半屏 */
+  #bz-header {
+    padding: 10px 12px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+  #bz-header .logo { font-size: 18px; }
+  #bz-header .tagline {
+    font-size: 10px;
+    margin-top: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 导航：允许换行成两行，6 个 tab 全部可见（比横向滚动更好找） */
+  #bz-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 6px 10px;
+    position: sticky;
+    top: 0;
+    z-index: 40;
+  }
+  #bz-nav a {
+    flex: 0 0 auto;
+    padding: 7px 12px;
+    font-size: 13px;
+    border-bottom: 1px solid #bbb;
+  }
+
+  #bz-main { padding: 10px; }
+
+  footer#bz-footer {
+    margin-top: 16px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    font-size: 10px;
+  }
+
+  /* 表单：标签独占一行，输入框撑满，字号 16px 避免 iOS 自动放大 */
+  .bz-form-row { margin-bottom: 10px; }
+  .bz-form-row > label {
+    display: block;
+    min-width: 0;
+    margin-bottom: 3px;
+    font-size: 12px;
+  }
+  .bz-form-row input[type="text"],
+  .bz-form-row input[type="number"],
+  .bz-form-row input[type="date"],
+  .bz-form-row select {
+    width: 100%;
+    font-size: 16px;
+    padding: 8px 10px;
+  }
+  .bz-form-row input.wide { width: 100%; }
+  .bz-form-row .bz-hint { display: block; margin: 3px 0 0; }
+  fieldset { padding: 8px 10px 10px; }
+
+  /* 按钮：加大触控区域 */
+  button, .bz-btn {
+    padding: 9px 14px;
+    font-size: 14px;
+    min-height: 38px;
+  }
+  button.primary { padding: 11px 16px; }
+  .bz-pager button { min-height: 32px; padding: 4px 10px; }
+  .bz-pager select { height: 32px; }
+
+  /* 汇总表（4 列 label/value）：手机上让它整体适宽、允许折行，
+     而不是横向裁掉数字 —— 这些数字是页面最重要的信息 */
+  /* 汇总表（4 列 label/value）在手机上改成「标签 34% / 数值 66%」两行一组，
+     避免数字被硬生生折断。用 table.bz.xxx 提高优先级，别被下面的 table.bz 覆盖。 */
+  table.bz.bz-summary,
+  table.bz.allocation-summary {
+    display: block;
+    width: 100%;
+  }
+  table.bz.bz-summary tbody,
+  table.bz.allocation-summary tbody { display: block; }
+  table.bz.bz-summary tr,
+  table.bz.allocation-summary tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  table.bz.bz-summary th,
+  table.bz.allocation-summary th {
+    flex: 0 0 34%;
+    white-space: normal;
+    background: #efefef;
+    border: 1px solid #bbb;
+    border-right: 0;
+  }
+  table.bz.bz-summary td,
+  table.bz.allocation-summary td {
+    flex: 1 1 66%;
+    white-space: normal;
+    border: 1px solid #bbb;
+  }
+
+  /* 汇总表里的空行（如占位用的空 th/td）直接不显示 */
+  table.bz.bz-summary tr:has(> th:empty),
+  table.bz.allocation-summary tr:has(> th:empty) { display: none; }
+
+  /* 宽表格横向滚动时给个提示，否则用户以为右侧内容丢了 */
+  .allocation-table-wrap::before,
+  .rebalance-table-wrap::before {
+    content: "← 左右滑动查看完整表格 →";
+    display: block;
+    font-size: 11px;
+    color: #888;
+    padding: 2px 0 4px;
+  }
+
+  /* 宽表格：整块横向滑动，表头不换行 */
+  table.bz {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  table.bz { font-size: 12px; }
+  table.bz th, table.bz td { white-space: nowrap; padding: 4px 6px; }
+  .portfolio-table-panel table.bz { table-layout: auto; font-size: 12px; }
+  .portfolio-table-panel table.bz th,
+  .portfolio-table-panel table.bz td { white-space: nowrap; overflow-wrap: normal; }
+
+  /* 图表：矮一点，省出竖向空间 */
+  .chart-box .chart-body { height: 260px; }
+  .portfolio-allocation-chart .chart-box .chart-body { height: 240px; }
+
+  h2.bz-section { font-size: 15px; margin: 16px 0 8px; }
+
+  /* 弹窗：接近全屏 */
+  .bz-modal {
+    width: 96vw;
+    top: 2vh;
+    max-height: 94vh;
+    box-shadow: 2px 2px 0 #999;
+  }
+  .bz-modal.rebalance-modal { width: 96vw; }
+  .bz-modal .modal-body { padding: 6px 8px; }
+
+  .allocation-toolbar { gap: 6px; }
+  .allocation-toolbar .toolbar-actions { gap: 4px; }
+  .allocation-summary { display: block; overflow-x: auto; }
+  .allocation-summary tr { white-space: nowrap; }
+}
+
+/* 横屏手机（如横过来看图表）稍微放宽一点 */
+@media (max-width: 900px) and (orientation: landscape) {
+  #bz-header { padding: 6px 12px; }
+  #bz-header .tagline { display: none; }
+}

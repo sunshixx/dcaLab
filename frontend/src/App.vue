@@ -1,5 +1,23 @@
 <script setup>
 // 全局布局
+import { onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+
+// 手机上导航条是横向滚动的：切页后把当前 tab 滚进可视区，
+// 否则从主屏幕快捷方式直接进 /review 时，高亮项可能在屏幕外。
+function revealActiveTab() {
+  const nav = document.getElementById('bz-nav')
+  if (!nav) return
+  if (nav.scrollWidth <= nav.clientWidth + 1) return
+  const active = nav.querySelector('a.router-link-active')
+  if (!active) return
+  active.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' })
+}
+
+watch(() => route.path, () => requestAnimationFrame(revealActiveTab), { flush: 'post' })
+onMounted(revealActiveTab)
 </script>
 
 <template>

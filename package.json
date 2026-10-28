@@ -11,7 +11,9 @@
     "db:backup": "node scripts/db-backup.mjs",
     "db:restore": "node scripts/db-restore.mjs",
     "dev": "concurrently -n api,web -c yellow,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
-    "test": "npm --prefix backend test"
+    "test": "npm --prefix backend test",
+    "mobile": "npm --prefix frontend run build && concurrently -n api,web -c yellow,cyan \"npm --prefix backend run start\" \"npm --prefix frontend run preview\"",
+    "mobile:https": "node scripts/make-cert.mjs && npm run mobile"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
