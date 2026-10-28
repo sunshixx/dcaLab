@@ -36,6 +36,7 @@ export const TX_TYPE_CN = {
 
 export const ASSET_TYPE_CN = {
   fund: '基金',
+  gold: '黄金（积存金）',
   provident_fund: '公积金',
   treasury_bond: '国债',
   reverse_repo: '国债逆回购',

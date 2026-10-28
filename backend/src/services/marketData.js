@@ -11,7 +11,7 @@
 //
 // 缓存：基金信息/最新净值 5min，估值 60s，历史净值 1h。
 
-const TTL = { info: 5 * 60_000, estimate: 60_000, navs: 3600_000 }
+const TTL = { info: 5 * 60_000, estimate: 60_000, navs: 3600_000, gold: 15_000 }
 const cache = new Map() // key -> {at, value}
 const pending = new Map() // key -> in-flight request
 
@@ -297,6 +297,109 @@ export async function usdcnyRate({ fresh = false, date = '' } = {}) {
     if (!Number.isFinite(rate) || rate <= 0) return null
     return rate
   }, fresh)
+}
+
+/* ── Provider G：黄金现货（上金所，元/克）────────────────────────────────
+ *
+ * 银行积存金（广发/招行等）不对外提供报价接口，账户里的成交价基本就是
+ * 上金所 Au99.99 ± 点差，所以这里取 Au99.99 作为基准行情，
+ * 再由 funds.price_offset（元/克）把基准价对齐到账户实际报价。
+ *
+ * 数据源：新浪财经 hq.sinajs.cn 的上金所快照（GBK 编码，需要 Referer）。
+ * 字段（按 , 切分）：0 最新价、2 买一、3 卖一、4 最高、5 最低、6 时间、
+ *                  7 昨收、8 今开、9 成交量、12 日期、13 名称。
+ * 已与上金所官方分钟线核对：今开/最高/最低完全吻合。
+ */
+const GOLD_INSTRUMENTS = {
+  AU9999: { symbol: 'gds_AU9999', name: '上金所 Au99.99' },
+  AUTD: { symbol: 'gds_AUTD', name: '上金所 Au(T+D)' }
+}
+export const GOLD_CODES = Object.keys(GOLD_INSTRUMENTS)
+
+/** 新浪行情返回 GBK，Node 的 TextDecoder 默认 UTF-8，需显式按 gbk 解码（名称字段会乱码） */
+async function decodeGbk(res) {
+  const buf = new Uint8Array(await res.arrayBuffer())
+  try {
+    return new TextDecoder('gbk').decode(buf)
+  } catch {
+    return new TextDecoder('utf-8').decode(buf)
+  }
+}
+
+export async function goldQuote(rawCode = 'AU9999', { fresh = false } = {}) {
+  const key = String(rawCode || 'AU9999').toUpperCase()
+  const spec = GOLD_INSTRUMENTS[key]
+  if (!spec) throw new Error('不支持的黄金品种')
+  return cached(`gold:${key}`, TTL.gold, async () => {
+    const res = await fetchWithTimeout(`https://hq.sinajs.cn/list=${spec.symbol}`, {
+      headers: { Referer: 'https://finance.sina.com.cn/' }
+    })
+    if (!res.ok) throw new Error(`黄金行情接口 HTTP ${res.status}`)
+    const text = await decodeGbk(res)
+    return parseGoldQuote(text, key)
+  }, fresh)
+}
+
+/** 解析新浪 `var hq_str_gds_AU9999="..."` 快照；独立出来便于单测 */
+export function parseGoldQuote(rawText, key = 'AU9999') {
+  const spec = GOLD_INSTRUMENTS[key]
+  if (!spec) throw new Error('不支持的黄金品种')
+  const quoted = String(rawText || '').match(/="([^"]*)"/)
+  if (!quoted) throw new Error('黄金行情返回格式异常')
+  const f = quoted[1].split(',')
+  const num = (i) => {
+    const v = Number(f[i])
+    return Number.isFinite(v) ? v : null
+  }
+  const price = num(0)
+  if (!(price > 0)) throw new Error('黄金行情暂无有效价格')
+  const prevClose = num(7)
+  return {
+    code: key,
+    instrument: spec.name,
+    unit: '元/克',
+    price,
+    prev_close: prevClose,
+    open: num(8),
+    high: num(4),
+    low: num(5),
+    change: prevClose > 0 ? Math.round((price - prevClose) * 100) / 100 : null,
+    change_pct: prevClose > 0 ? Math.round((price / prevClose - 1) * 1e6) / 1e6 : null,
+    quote_date: f[12] || '',
+    quote_time: f[6] || '',
+    as_of: `${f[12] || ''} ${f[6] || ''}`.trim(),
+    source: '新浪财经 · 上海黄金交易所'
+  }
+}
+
+/** 黄金持仓估值：上金所基准价 + 点差（元/克），返回与 fundSnapshot 同形的快照 */
+export async function goldSnapshot({ offset = 0, code = 'AU9999', fresh = false } = {}) {
+  const quote = await goldQuote(code, { fresh }).catch(() => null)
+  if (!quote) {
+    return {
+      found: false,
+      info: null,
+      currency: 'CNY',
+      quote_price: null,
+      valuation_nav: null,
+      valuation_date: '',
+      valuation_source: null
+    }
+  }
+  const spread = Number(offset) || 0
+  const effective = Math.round((quote.price + spread) * 100) / 100
+  const sign = spread > 0 ? '+' : ''
+  return {
+    found: true,
+    info: { name: quote.instrument, nav: effective, nav_date: quote.quote_date },
+    currency: 'CNY',
+    quote_price: effective,
+    premium_rate: null,
+    valuation_nav: effective,
+    valuation_date: quote.quote_date,
+    valuation_source: spread ? `${quote.instrument} ${sign}${spread} 元/克` : quote.instrument,
+    gold: { ...quote, spread, effective_price: effective }
+  }
 }
 
 function formatUnixSec(sec) {

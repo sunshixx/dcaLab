@@ -87,16 +87,19 @@ export const planSchema = z.object({
 export const fundSchema = z.object({
   code: z.string().regex(/^[A-Za-z0-9_-]{1,20}$/, '代码只能包含字母、数字、下划线或短横线（最多 20 位）').optional(),
   name: z.string().min(1).max(60).optional(),
-  asset_type: z.enum(['fund', 'provident_fund', 'treasury_bond', 'reverse_repo', 'cash_flow']).default('fund'),
+  asset_type: z.enum(['fund', 'gold', 'provident_fund', 'treasury_bond', 'reverse_repo', 'cash_flow']).default('fund'),
   type: z.string().max(30).optional(),
   note: z.string().max(200).optional()
   ,management_fee: z.number().min(0).max(0.05).default(0)
   ,custody_fee: z.number().min(0).max(0.05).default(0)
   ,subscription_fee: z.number().min(0).max(0.05).default(0)
+  // 黄金点差（元/克）：把上金所 Au99.99 基准价对齐到银行积存金实际报价
+  ,price_offset: z.number().min(-50).max(50).default(0)
   ,redemption_fee_tiers: redemptionTiersSchema
 }).superRefine((fund, ctx) => {
   if (fund.asset_type === 'fund' && !fund.code) ctx.addIssue({ code: 'custom', path: ['code'], message: '基金必须填写代码' })
-  if (fund.asset_type !== 'fund' && !fund.name) ctx.addIssue({ code: 'custom', path: ['name'], message: '非基金标的请填写名称' })
+  // 黄金的名称由后端补默认值（黄金积存（上金所 Au99.99）），其余手工标的必须填名称
+  if (!['fund', 'gold'].includes(fund.asset_type) && !fund.name) ctx.addIssue({ code: 'custom', path: ['name'], message: '非基金标的请填写名称' })
 })
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
@@ -161,14 +164,14 @@ export const importCsvSchema = z.object({
 
 // ── 目标配置（计划比例 + 类别标的映射）──────────────────────
 // 只允许手工类资产按类型自动归入；基金必须逐个指定代码，避免整类误归。
-export const ALLOCATION_AUTO_TYPES = ['provident_fund', 'treasury_bond', 'reverse_repo', 'cash_flow']
+export const ALLOCATION_AUTO_TYPES = ['gold', 'provident_fund', 'treasury_bond', 'reverse_repo', 'cash_flow']
 
 export const allocationItemSchema = z.object({
   name: z.string().trim().min(1, '类别名称不能为空').max(20),
   ratio: z.number().min(0).max(1),
   group_name: z.string().trim().max(20).default(''),
   fund_codes: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,20}$/)).max(50).default([]),
-  asset_types: z.array(z.enum(ALLOCATION_AUTO_TYPES)).max(4).default([])
+  asset_types: z.array(z.enum(ALLOCATION_AUTO_TYPES)).max(5).default([])
 })
 
 export const allocationPlanSchema = z

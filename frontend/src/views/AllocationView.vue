@@ -9,6 +9,7 @@ import ProgressBar from '../components/ProgressBar.vue'
 import RebalanceModal from '../components/RebalanceModal.vue'
 
 const AUTO_TYPE_OPTIONS = [
+  { value: 'gold', label: ASSET_TYPE_CN.gold },
   { value: 'provident_fund', label: ASSET_TYPE_CN.provident_fund },
   { value: 'treasury_bond', label: ASSET_TYPE_CN.treasury_bond },
   { value: 'reverse_repo', label: ASSET_TYPE_CN.reverse_repo },

@@ -1,16 +1,64 @@
 <script setup>
 // 持仓概览：单位净值估值、市值与盈亏、配置饼图、投入 vs 市值曲线、组合 XIRR
-import { onMounted, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useLedgerStore } from '../stores/ledgerStore.js'
+import { api } from '../api.js'
 import { fmtMoney, fmtWan, fmtPct, ASSET_TYPE_CN } from '../fmt.js'
 import ChartBox from '../components/ChartBox.vue'
 import { RETRO_COLORS } from '../chartTheme.js'
 
 const store = useLedgerStore()
-onMounted(() => {
-  store.loadHoldings({ fresh: true }).catch((e) => (store.error = e.message))
-  store.loadStats({ fresh: true }).catch(() => {})
+
+// 黄金行情单独轮询：Au99.99 每 15 秒刷新，只重算黄金持仓（?assets=gold），
+// 避免每次都把全部基金行情拉一遍；其余标的在进入页面时算一次。
+const goldMarket = ref(null)
+const goldError = ref('')
+let timer = null
+
+function refreshAll(fresh = true) {
+  store.loadHoldings({ fresh }).catch((e) => (store.error = e.message))
+  store.loadStats({ fresh }).catch(() => {})
   store.loadSeries().catch(() => {})
+}
+
+async function loadGoldMarket() {
+  try {
+    goldMarket.value = await api('/market/gold')
+    goldError.value = ''
+  } catch (e) {
+    goldError.value = e.message || ''
+  }
+}
+
+async function refreshGold() {
+  if (!store.holdings.some((h) => h.asset_type === 'gold')) return
+  try {
+    const rows = await api('/ledger/holdings?assets=gold')
+    const byCode = new Map(rows.map((row) => [row.fund_code, row]))
+    store.holdings = store.holdings.map((h) => byCode.get(h.fund_code) || h)
+  } catch {
+    /* 15 秒轮询失败不打扰用户，等下次 */
+  }
+}
+
+onMounted(() => {
+  refreshAll()
+  loadGoldMarket()
+  timer = setInterval(() => {
+    loadGoldMarket()
+    refreshGold()
+  }, 15000)
+})
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
+
+const hasGold = computed(() => store.holdings.some((h) => h.asset_type === 'gold'))
+
+// 持仓市值总和随黄金实时价一起跳动（与 /stats 的 total_market_value 同口径）
+const liveMarketValue = computed(() => {
+  if (!store.holdings.length) return store.stats?.total_market_value ?? null
+  return Math.round(store.holdings.reduce((sum, h) => sum + (h.market_value || 0), 0) * 100) / 100
 })
 
 const allocOption = computed(() => {
@@ -62,7 +110,7 @@ const assetTypeName = (type) => ASSET_TYPE_CN[type] || '基金'
           <th>定投基金累计净投入</th>
           <td class="num big">{{ fmtMoney(st.total_invested) }} 元</td>
           <th>全部持仓当前市值</th>
-          <td class="num big">{{ fmtMoney(st.total_market_value) }} 元</td>
+          <td class="num big">{{ fmtMoney(liveMarketValue) }} 元</td>
         </tr>
         <tr>
           <th>定投基金未实现盈亏</th>
@@ -94,6 +142,16 @@ const assetTypeName = (type) => ASSET_TYPE_CN[type] || '基金'
         </tr>
       </table>
 
+      <div v-if="hasGold && goldMarket" class="bz-note gold-live">
+        <strong>黄金实时行情</strong>
+        上金所 Au99.99 <strong>{{ goldMarket.price }}</strong> 元/克
+        <span :class="goldMarket.change >= 0 ? 'pos' : 'neg'">
+          （{{ goldMarket.change >= 0 ? '+' : '' }}{{ goldMarket.change }}，{{ (goldMarket.change_pct * 100).toFixed(2) }}%）
+        </span>
+        <span class="bz-hint">· {{ goldMarket.as_of }} · 每 15 秒刷新</span>
+        <span v-if="goldError" class="bz-hint"> · {{ goldError }}</span>
+      </div>
+
       <div class="portfolio-charts">
         <div class="portfolio-growth-chart">
           <ChartBox v-if="seriesOption.xAxis" title="投入 vs 市值走势（按历史净值回溯，月度）" :option="seriesOption" />
@@ -108,7 +166,7 @@ const assetTypeName = (type) => ASSET_TYPE_CN[type] || '基金'
         <table class="bz">
             <tr>
               <th>标的</th>
-              <th class="num">持有份额</th>
+              <th class="num">持有份额 / 克数</th>
               <th class="num">净值持仓成本</th>
               <th class="num">最新估值净值</th>
               <th class="num">市值</th>
@@ -119,11 +177,11 @@ const assetTypeName = (type) => ASSET_TYPE_CN[type] || '基金'
             </tr>
             <tr v-for="h in store.holdings" :key="h.fund_code">
               <td>{{ h.fund_name }}<span class="bz-hint"> {{ h.fund_code }} · {{ assetTypeName(h.asset_type) }}</span></td>
-              <td class="num">{{ h.shares.toFixed(2) }}</td>
+              <td class="num">{{ h.shares.toFixed(2) }}<span v-if="h.asset_type === 'gold'" class="bz-hint"> 克</span></td>
               <td class="num" :title="h.avg_cost_with_fee ? `含手续费现金成本：${h.avg_cost_with_fee.toFixed(4)}` : ''">
                 {{ h.avg_cost ? h.avg_cost.toFixed(4) : '—' }}
               </td>
-              <td class="num">{{ h.latest_nav != null ? h.latest_nav : '—' }}</td>
+              <td class="num">{{ h.latest_nav != null ? h.latest_nav : '—' }}<span v-if="h.asset_type === 'gold'" class="bz-hint"> 元/克</span></td>
               <td class="num">{{ fmtMoney(h.market_value) }}</td>
               <td class="num" :class="h.unrealized_pl >= 0 ? 'pos' : 'neg'">{{ fmtMoney(h.unrealized_pl) }}</td>
               <td class="num" :class="h.unrealized_pl >= 0 ? 'pos' : 'neg'">{{ fmtPct(h.unrealized_pl_pct) }}</td>

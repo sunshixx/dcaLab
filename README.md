@@ -29,6 +29,8 @@
 - 输入 6 位基金代码自动带出名称/类型（东方财富公开接口）
 - 交易录入**按日期自动回查成交净值**（正确处理 QDII T+1/T+2 净值滞后；查不到可手填）
 - 类型：买入 / 卖出 / 现金分红 / 分红再投资 / 费用调整；卖出做份额校验
+- **黄金 / 积存金**：按「元/克 + 克数」记账，行情取上金所 Au99.99（新浪公开接口，15 秒缓存）；
+  银行积存金没有公开报价，用标的上的**点差（元/克）**把基准价对齐到账户实际报价
 - 成本口径：**移动加权平均**；已实现/未实现盈亏分列
 - **组合 XIRR**（金额加权年化，牛顿迭代+二分）与简单收益率并列
 - CSV 导入/导出（UTF-8 BOM，Excel 友好）
@@ -84,8 +86,8 @@ plans                    定投方案
 allocation_plans         目标配置计划（总金额）
 allocation_items         目标配置类别（比例、分组）
 allocation_item_funds    类别 ↔ 记账本标的（手工指定）
-allocation_item_types    类别 ↔ 资产类型（公积金/国债/逆回购/现金流自动归入）
-funds                    基金信息
+allocation_item_types    类别 ↔ 资产类型（黄金/公积金/国债/逆回购/现金流自动归入）
+funds                    基金与黄金等标的（含 price_offset 点差）
 transactions             交易流水
 reports                  报告摘要、新闻、行情审计、payload、HTML 和缓存失效时间
 schema_migrations        已执行的 SQL migration 版本

@@ -10,7 +10,7 @@ import { db, sql } from '../models/db.js'
 import { allocationPlanSchema } from '../models/schemas.js'
 import { computeHoldings } from '../services/bookkeeping.js'
 import { addAutomaticReinvestments, loadTxs, MANUAL_ASSET_TYPES, latestManualPrice } from '../services/ledgerData.js'
-import { fundSnapshot, usdcnyRate } from '../services/marketData.js'
+import { fundSnapshot, usdcnyRate, goldSnapshot } from '../services/marketData.js'
 import { computeAllocation } from '../services/allocation.js'
 
 const r = Router()
@@ -139,6 +139,22 @@ async function buildValuations(holdings, funds, txs, fresh) {
   await Promise.all(
     holdings.map(async (holding) => {
       const fund = funds.get(holding.fund_code)
+      if (fund?.asset_type === 'gold') {
+        const snap = await goldSnapshot({ offset: fund.price_offset || 0, fresh })
+        const nav = Number(snap.valuation_nav) > 0 ? Number(snap.valuation_nav) : 0
+        // 金价拿不到时退回最近一次录入价，避免整页资金占比被黄金拖成 0
+        const price = nav > 0 ? nav : latestManualPrice(txs, holding.fund_code) || 1
+        valuations.set(holding.fund_code, {
+          market_value: round2(holding.shares * price),
+          nav: nav || null,
+          market_price: price,
+          valuation_source: nav > 0 ? snap.valuation_source : '成本价兜底（金价不可用）',
+          valuation_date: snap.valuation_date || '',
+          estimate_time: '',
+          currency: 'CNY'
+        })
+        return
+      }
       if (MANUAL_ASSET_TYPES.has(fund?.asset_type)) {
         const nav = latestManualPrice(txs, holding.fund_code) || 1
         valuations.set(holding.fund_code, {
@@ -185,7 +201,7 @@ r.get('/overview', async (req, res, next) => {
     const txs = await addAutomaticReinvestments(loadTxs(null))
     // 只统计仍有份额的持仓：清仓后的基金不再占用目标额度
     const holdings = computeHoldings(txs).filter((holding) => holding.shares > 1e-9)
-    const fundRows = sql.all('SELECT code, name, type, asset_type, market, currency FROM funds')
+    const fundRows = sql.all('SELECT code, name, type, asset_type, market, currency, price_offset FROM funds')
     const funds = new Map(fundRows.map((fund) => [fund.code, fund]))
     const valuations = await buildValuations(holdings, funds, txs, fresh)
     const overview = computeAllocation({ plan, items: plan.items, holdings, funds, valuations })

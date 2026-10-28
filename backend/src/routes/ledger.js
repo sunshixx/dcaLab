@@ -4,7 +4,7 @@ import { sql } from '../models/db.js'
 import { fundSchema, transactionSchema, importCsvSchema } from '../models/schemas.js'
 import { computeHoldings, portfolioXirr, exportCsv, parseImportCsv, sharesForBuy, sharesStillValidAfterRemoval } from '../services/bookkeeping.js'
 import { grossUpNetReturn } from '../services/simulator.js'
-import { fundSnapshot, navHistorySince, usdcnyRate, fundAssetAllocation } from '../services/marketData.js'
+import { fundSnapshot, navHistorySince, usdcnyRate, fundAssetAllocation, goldSnapshot } from '../services/marketData.js'
 import { calculateReverseRepo, isChinaBusinessDay, REPO_TERMS } from '../services/chinaFixedIncome.js'
 import {
   MANUAL_ASSET_TYPES,
@@ -27,7 +27,7 @@ async function hasEnoughShares(fundCode, candidate) {
 
 // ── 基金 ──
 r.get('/funds', (_req, res) => {
-  res.json(sql.all('SELECT code, name, type, asset_type, note, market, currency, management_fee, custody_fee, subscription_fee, redemption_fee_tiers, created_at FROM funds ORDER BY code').map(parseFundProfile))
+  res.json(sql.all('SELECT code, name, type, asset_type, note, market, currency, management_fee, custody_fee, subscription_fee, price_offset, redemption_fee_tiers, created_at FROM funds ORDER BY code').map(parseFundProfile))
 })
 
 r.post('/funds', async (req, res) => {
@@ -35,12 +35,13 @@ r.post('/funds', async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: '参数校验失败', issues: parsed.error.issues })
   const parsedCode = parsed.data.code || `M${Date.now().toString(36).toUpperCase()}`
   const code = /^\d{6}$/.test(parsedCode) ? parsedCode : parsedCode.toUpperCase()
-  const { name, asset_type, type, note, management_fee, custody_fee, subscription_fee, redemption_fee_tiers } = parsed.data
-  if (asset_type !== 'fund' && !name) return res.status(400).json({ error: '非基金标的请填写名称' })
+  const { name, asset_type, type, note, management_fee, custody_fee, subscription_fee, price_offset, redemption_fee_tiers } = parsed.data
+  const isGold = asset_type === 'gold'
+  if (asset_type !== 'fund' && !isGold && !name) return res.status(400).json({ error: '非基金标的请填写名称' })
   const existed = sql.get('SELECT code FROM funds WHERE code = ?', code)
-  let finalName = name
-  let finalType = type || ''
-  let market = asset_type === 'fund' ? (/^\d{6}$/.test(code) ? 'CN_FUND' : 'US_ETF') : 'MANUAL'
+  let finalName = name || (isGold ? '黄金积存（上金所 Au99.99）' : '')
+  let finalType = type || (isGold ? '黄金' : '')
+  let market = asset_type === 'fund' ? (/^\d{6}$/.test(code) ? 'CN_FUND' : 'US_ETF') : isGold ? 'SGE' : 'MANUAL'
   let currency = market === 'US_ETF' ? 'USD' : 'CNY'
   const snap = asset_type === 'fund' ? await fundSnapshot(code).catch(() => null) : null
   if (snap) {
@@ -56,8 +57,8 @@ r.post('/funds', async (req, res) => {
     currency = snap.currency || currency
   }
   sql.run(
-    'INSERT INTO funds (code, name, type, asset_type, note, market, currency, management_fee, custody_fee, subscription_fee, redemption_fee_tiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
-      'ON CONFLICT(code) DO UPDATE SET name = excluded.name, type = excluded.type, asset_type = excluded.asset_type, note = COALESCE(NULLIF(excluded.note, \'\'), funds.note), market = excluded.market, currency = excluded.currency, management_fee = excluded.management_fee, custody_fee = excluded.custody_fee, subscription_fee = excluded.subscription_fee, redemption_fee_tiers = excluded.redemption_fee_tiers',
+    'INSERT INTO funds (code, name, type, asset_type, note, market, currency, management_fee, custody_fee, subscription_fee, price_offset, redemption_fee_tiers) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+      'ON CONFLICT(code) DO UPDATE SET name = excluded.name, type = excluded.type, asset_type = excluded.asset_type, note = COALESCE(NULLIF(excluded.note, \'\'), funds.note), market = excluded.market, currency = excluded.currency, management_fee = excluded.management_fee, custody_fee = excluded.custody_fee, subscription_fee = excluded.subscription_fee, price_offset = excluded.price_offset, redemption_fee_tiers = excluded.redemption_fee_tiers',
     code,
     finalName,
     finalType,
@@ -68,6 +69,7 @@ r.post('/funds', async (req, res) => {
     management_fee,
     custody_fee,
     subscription_fee,
+    isGold ? price_offset : 0,
     JSON.stringify(redemption_fee_tiers)
   )
   res.status(existed ? 200 : 201).json({ code, name: finalName, updated: !!existed })
@@ -180,7 +182,7 @@ r.delete('/transactions/:id', (req, res) => {
 r.get('/simulation-context', async (_req, res) => {
   const txs = await addAutomaticReinvestments(loadTxs(null))
   const holdings = computeHoldings(txs).filter((h) => h.shares > 0)
-  const funds = new Map(sql.all('SELECT code, name, type, asset_type, management_fee, custody_fee, subscription_fee, redemption_fee_tiers FROM funds').map((f) => [f.code, f]))
+  const funds = new Map(sql.all('SELECT code, name, type, asset_type, management_fee, custody_fee, subscription_fee, price_offset, redemption_fee_tiers FROM funds').map((f) => [f.code, f]))
   const since = new Date()
   since.setFullYear(since.getFullYear() - 3)
   const sinceDate = since.toISOString().slice(0, 10)
@@ -202,9 +204,12 @@ r.get('/simulation-context', async (_req, res) => {
   }
   const assets = await Promise.all(holdings.map(async (h) => {
     const fund = funds.get(h.fund_code)
-    const manual = MANUAL_ASSET_TYPES.has(fund?.asset_type)
+    const isGold = fund?.asset_type === 'gold'
+    const manual = MANUAL_ASSET_TYPES.has(fund?.asset_type) || isGold
     const [snapshot, history, allocation] = await Promise.all([
-      manual ? Promise.resolve({ info: { name: fund.name }, currency: 'CNY' }) : fundSnapshot(h.fund_code, { fresh: true }),
+      isGold
+        ? goldSnapshot({ offset: fund.price_offset || 0, fresh: true })
+        : manual ? Promise.resolve({ info: { name: fund.name }, currency: 'CNY' }) : fundSnapshot(h.fund_code, { fresh: true }),
       manual ? Promise.resolve([]) : navHistorySince(h.fund_code, sinceDate).catch(() => []),
       // 真实现金占净比（用于把历史净收益还原成毛收益，并供模拟器扣现金拖累）
       manual || !/^\d{6}$/.test(h.fund_code)
@@ -216,7 +221,8 @@ r.get('/simulation-context', async (_req, res) => {
     const days = first && last ? Math.max(1, (new Date(last.date) - new Date(first.date)) / 86400000) : 0
     // 美股代码没有历史净值接口（navHistory 仅支持 CN 基金），拿不到历史时显式标记为默认假设
     // 手动标的（公积金/现金流等）是现金类存量，不按权益收益率增长
-    const isManual = MANUAL_ASSET_TYPES.has(fund?.asset_type)
+    // 黄金同样没有可用的历史收益序列，按手工标的口径处理（不套默认 7% 假设）
+    const isManual = MANUAL_ASSET_TYPES.has(fund?.asset_type) || isGold
     const annualReturn = first && last && days >= 180 ? Math.pow(last.nav / first.nav, 365 / days) - 1 : null
     const fxRate = snapshot.currency === 'USD' ? await usdcnyRate({ fresh: true }).catch(() => null) : 1
     // avg_cost 是 CNY/份；USD 标的行情失败时的兜底净值要折回 USD 量纲
@@ -235,7 +241,7 @@ r.get('/simulation-context', async (_req, res) => {
     const grossReturn = annualReturn == null ? 0.07 : grossUpNetReturn(annualReturn, feeRate, cashRatio)
     return {
       code: h.fund_code,
-      name: snapshot.info?.name || funds.get(h.fund_code)?.name || h.fund_code,
+      name: (isGold ? fund?.name : null) || snapshot.info?.name || funds.get(h.fund_code)?.name || h.fund_code,
       asset_type: fund?.asset_type || 'fund',
       fund_type: fund?.type || '',
       shares: h.shares,
@@ -269,25 +275,33 @@ r.get('/simulation-context', async (_req, res) => {
 // ── 持仓（附加最新估值）──
 r.get('/holdings', async (req, res) => {
   const fresh = req.query.refresh === '1'
+  // ?assets=gold 只算黄金持仓：不触发任何基金行情请求，供前端 15 秒刷新用
+  const goldOnly = req.query.assets === 'gold'
+  const goldCodes = goldOnly ? new Set(sql.all("SELECT code FROM funds WHERE asset_type = 'gold'").map((row) => row.code)) : null
   const txs = await addAutomaticReinvestments(loadTxs(null))
-  const holdings = computeHoldings(txs)
+  const holdings = computeHoldings(txs).filter((h) => !goldOnly || goldCodes.has(h.fund_code))
   const enriched = await Promise.all(
     holdings.map(async (h) => {
-      const fund = sql.get('SELECT name, asset_type, currency FROM funds WHERE code = ?', h.fund_code)
+      const fund = sql.get('SELECT name, asset_type, currency, price_offset FROM funds WHERE code = ?', h.fund_code)
       const manual = MANUAL_ASSET_TYPES.has(fund?.asset_type)
-      const snap = manual
-        ? { info: { name: fund.name }, valuation_nav: latestManualPrice(txs, h.fund_code), quote_price: null, valuation_source: '手工录入', valuation_date: '' }
-        : await fundSnapshot(h.fund_code, { fresh })
+      const isGold = fund?.asset_type === 'gold'
+      const snap = isGold
+        ? await goldSnapshot({ offset: fund?.price_offset || 0, fresh })
+        : manual
+          ? { info: { name: fund.name }, valuation_nav: latestManualPrice(txs, h.fund_code), quote_price: null, valuation_source: '手工录入', valuation_date: '' }
+          : await fundSnapshot(h.fund_code, { fresh })
       const nav = snap.valuation_nav ?? 0
       const marketPrice = snap.quote_price ?? nav
       const fxRate = snap.currency === 'USD' ? (await usdcnyRate({ fresh }).catch(() => null)) || 7.1 : 1
       const value = marketPrice > 0 ? h.shares * marketPrice * fxRate : 0
       return {
         ...h,
-        fund_name: snap.info ? snap.info.name : fund?.name || '(未知标的)',
+        fund_name: (isGold ? fund?.name : null) || (snap.info ? snap.info.name : null) || fund?.name || '(未知标的)',
         asset_type: fund?.asset_type || 'fund',
         latest_nav: nav,
         market_price: snap.quote_price,
+        // 黄金按「元/克」计价，前端据此切换单位
+        price_unit: isGold ? '元/克' : '元/份',
         nav_date: snap.valuation_date,
         estimate_time: snap.estimate_time || '',
         valuation_source: snap.valuation_source,
@@ -298,7 +312,7 @@ r.get('/holdings', async (req, res) => {
         cash_cost: round2(h.total_cost),
         market_value: Math.round(value * 100) / 100,
         unrealized_pl: Math.round((value - h.total_cost) * 100) / 100,
-        unrealized_pl_pct: fund?.asset_type === 'fund' && h.total_cost > 0 ? (value - h.total_cost) / h.total_cost : null
+        unrealized_pl_pct: (fund?.asset_type === 'fund' || isGold) && h.total_cost > 0 ? (value - h.total_cost) / h.total_cost : null
       }
     })
   )
@@ -314,7 +328,8 @@ r.get('/stats', async (req, res) => {
   const performanceTxs = txs.filter((tx) => fundCodes.has(tx.fund_code))
   const performanceComputed = computed.filter((h) => fundCodes.has(h.fund_code))
   const snapShots = await Promise.all(computed.map((h) => {
-    const fund = sql.get('SELECT name, asset_type, currency FROM funds WHERE code = ?', h.fund_code)
+    const fund = sql.get('SELECT name, asset_type, currency, price_offset FROM funds WHERE code = ?', h.fund_code)
+    if (fund?.asset_type === 'gold') return goldSnapshot({ offset: fund.price_offset || 0, fresh })
     return MANUAL_ASSET_TYPES.has(fund?.asset_type)
       ? Promise.resolve({ info: { name: fund.name }, valuation_nav: latestManualPrice(txs, h.fund_code), quote_price: null, currency: 'CNY' })
       : fundSnapshot(h.fund_code, { fresh })

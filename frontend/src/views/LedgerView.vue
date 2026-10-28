@@ -1,12 +1,32 @@
 <script setup>
 // 记账本：添加基金（输代码自动查名）→ 录交易（自动回查净值）→ 流水管理 → CSV 导入导出
-import { onMounted, ref, computed, watch } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
 import { useLedgerStore } from '../stores/ledgerStore.js'
 import { api } from '../api.js'
 import { fmtMoney, fmtPct, toPctInput, fromPctInput, TX_TYPE_CN, ASSET_TYPE_CN } from '../fmt.js'
 
 const store = useLedgerStore()
-onMounted(() => store.loadAll())
+onMounted(() => {
+  store.loadAll()
+  loadGoldMarket()
+  goldTimer = setInterval(loadGoldMarket, 15000)
+})
+onUnmounted(() => {
+  if (goldTimer) clearInterval(goldTimer)
+})
+
+// ── 黄金实时行情（上金所 Au99.99，银行积存金的基准价）──
+const goldMarket = ref(null)
+const goldMarketError = ref('')
+let goldTimer = null
+async function loadGoldMarket() {
+  try {
+    goldMarket.value = await api('/market/gold')
+    goldMarketError.value = ''
+  } catch (e) {
+    goldMarketError.value = e.message || '黄金行情暂不可用'
+  }
+}
 
 // 切换基金筛选时回到第 1 页，避免停在越界页码上
 watch(() => store.filterFund, () => { store.page = 1 })
@@ -30,6 +50,7 @@ const pageNumbers = computed(() => {
 const newCode = ref('')
 const newName = ref('')
 const newAssetType = ref('fund')
+const newGoldOffset = ref(0) // 黄金点差（元/克）：对齐银行积存金实际报价
 const addFundMsg = ref('')
 const adding = ref(false)
 const CODE_RE = /^[A-Za-z0-9_-]{1,20}$/
@@ -40,16 +61,23 @@ async function addFund() {
     addFundMsg.value = '请输入 1~20 位字母、数字、下划线或短横线代码'
     return
   }
-  if (newAssetType.value !== 'fund' && !newName.value.trim()) {
+  if (newAssetType.value !== 'fund' && newAssetType.value !== 'gold' && !newName.value.trim()) {
     addFundMsg.value = '非基金标的请填写名称'
     return
   }
   adding.value = true
   try {
+    // 黄金标的用代码区分不同账户（如 AU9999 / GFAU），留空默认 AU9999
+    const targetCode = newAssetType.value === 'fund'
+      ? newCode.value
+      : newAssetType.value === 'gold'
+        ? (newCode.value || 'AU9999').toUpperCase()
+        : ''
     const result = await store.addFund({
-      ...(newAssetType.value === 'fund' ? { code: newCode.value } : {}),
+      ...(targetCode ? { code: targetCode } : {}),
       name: newName.value || undefined,
       asset_type: newAssetType.value,
+      ...(newAssetType.value === 'gold' ? { price_offset: Number(newGoldOffset.value) || 0 } : {}),
       management_fee: feeProfile.value.management,
       custody_fee: feeProfile.value.custody,
       subscription_fee: feeProfile.value.subscription,
@@ -64,6 +92,7 @@ async function addFund() {
     newCode.value = ''
     newName.value = ''
     newAssetType.value = 'fund'
+    newGoldOffset.value = 0
     feeProfile.value = { management: 0, custody: 0, subscription: 0, under7: 0, under365: 0, under730: 0, over730: 0 }
   } catch (e) {
     addFundMsg.value = e.message
@@ -93,7 +122,10 @@ function formatQuoteTime(value) {
   return `查询：${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-const isManualAsset = computed(() => selectedFund.value && selectedFund.value.asset_type !== 'fund')
+const isGold = computed(() => selectedFund.value?.asset_type === 'gold')
+const hasGoldFund = computed(() => store.funds.some((f) => f.asset_type === 'gold'))
+// 黄金有实时行情（上金所 Au99.99），不属于「手工估值」标的
+const isManualAsset = computed(() => selectedFund.value && selectedFund.value.asset_type !== 'fund' && selectedFund.value.asset_type !== 'gold')
 const isCashFlow = computed(() => selectedFund.value?.asset_type === 'cash_flow')
 const isProvidentFund = computed(() => selectedFund.value?.asset_type === 'provident_fund')
 const isTreasuryBond = computed(() => selectedFund.value?.asset_type === 'treasury_bond')
@@ -136,6 +168,13 @@ const txTypeOptions = computed(() => {
   if (selectedFund.value?.asset_type === 'reverse_repo') {
     return [{ value: 'buy', label: '出借本金' }, { value: 'sell', label: '到期收回' }, { value: 'fee', label: '手续费' }]
   }
+  if (isGold.value) {
+    return [
+      { value: 'buy', label: '买入 / 积存' },
+      { value: 'sell', label: '卖出 / 赎回' },
+      { value: 'fee', label: '费用调整' }
+    ]
+  }
   return [
     { value: 'buy', label: '买入（申购）' },
     { value: 'sell', label: '卖出（赎回）' },
@@ -150,6 +189,7 @@ const amountLabel = computed(() => {
   if (isProvidentFund.value) return tx.value.type === 'sell' ? '提取金额' : '缴存金额'
   if (selectedFund.value?.asset_type === 'reverse_repo') return tx.value.type === 'sell' ? '到期收回金额' : '出借本金'
   if (selectedFund.value?.asset_type === 'treasury_bond') return tx.value.type === 'sell' ? '卖出总额' : '买入金额'
+  if (isGold.value) return tx.value.type === 'sell' ? '卖出金额' : '买入金额'
   return tx.value.type === 'sell' ? '卖出总额' : tx.value.type === 'dividend_cash' ? '分红到账' : tx.value.type === 'fee' ? '费用金额' : '实际扣款'
 })
 
@@ -160,11 +200,66 @@ function onFundChange() {
   lookupNav()
 }
 
+// 黄金：显式取当前金价（含点差）。只有点「回查」或选中当日标的时才会覆盖输入框
+async function fetchGoldPrice() {
+  looking.value = true
+  try {
+    const q = await api(`/market/gold?offset=${(selectedFund.value && selectedFund.value.price_offset) || 0}`)
+    tx.value.nav = q.effective_price
+    const spreadText = q.spread ? ` ${q.spread > 0 ? '+' : ''}${q.spread} 元/克` : ''
+    navHint.value = { nav: q.effective_price, source: `上金所 Au99.99${spreadText}（${q.as_of}）` }
+    goldMarket.value = q
+  } catch {
+    navHint.value = { nav: null, source: '金价查询暂不可用，请手填' }
+  } finally {
+    looking.value = false
+  }
+}
+
+// 失焦不能把用户手填的成交价冲掉（原来 @change 直接回查，导致金价永远改不了）
+function onPriceEdited() {
+  if (isGold.value) {
+    if (Number(tx.value.nav) > 0) {
+      navHint.value = { nav: tx.value.nav, source: '手填成交价（点「回查」可取当前金价）' }
+    }
+    return
+  }
+  lookupNav()
+}
+
+function onDateChange() {
+  if (isGold.value) {
+    // 只有「自动带出的实时金价」需要跟着日期清理；用户手填的价格不动
+    const autoFilled = navHint.value && String(navHint.value.source || '').startsWith('上金所')
+    if (tx.value.date === today()) {
+      if (!(Number(tx.value.nav) > 0) || autoFilled) fetchGoldPrice()
+      return
+    }
+    // 补录历史交易：不要把今天的价格当成当天成交价
+    if (autoFilled) {
+      tx.value.nav = ''
+      navHint.value = { nav: null, source: '非当日交易：请按成交单手填金价' }
+    }
+    return
+  }
+  lookupNav()
+}
+
+function requery() {
+  return isGold.value ? fetchGoldPrice() : lookupNav()
+}
+
 // 输入代码+日期后自动回查该日净值
 async function lookupNav() {
   navHint.value = null
   quoteTime.value = ''
   fxMessage.value = ''
+  if (isGold.value) {
+    // 只有当天交易才自动带出实时金价；补录历史买入时按成交单手填
+    if (tx.value.date === today()) return fetchGoldPrice()
+    navHint.value = { nav: null, source: '非当日交易：请按成交单手填金价，或点「回查」取当前价' }
+    return
+  }
   if (isManualAsset.value) {
     if (selectedFund.value.asset_type === 'provident_fund') tx.value.nav = 1
     navHint.value = { nav: tx.value.nav || 1, source: '手工估值，不查询行情' }
@@ -292,11 +387,27 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
   <div class="bz-layout">
     <!-- ── 左：录入区 ── -->
     <div class="bz-params">
+      <div v-if="hasGoldFund && goldMarket" class="bz-note gold-live">
+        <strong>黄金实时行情</strong>
+        上金所 Au99.99 <strong>{{ goldMarket.price }}</strong> 元/克
+        <span :class="goldMarket.change >= 0 ? 'pos' : 'neg'">
+          （{{ goldMarket.change >= 0 ? '+' : '' }}{{ goldMarket.change }}，{{ (goldMarket.change_pct * 100).toFixed(2) }}%）
+        </span>
+        <span class="bz-hint">· {{ goldMarket.as_of }} · 每 15 秒刷新</span>
+      </div>
+      <div v-if="hasGoldFund && goldMarketError" class="bz-hint">{{ goldMarketError }}</div>
       <fieldset>
         <legend>① 添加资产到记账本</legend>
         <div class="bz-form-row">
-          <label v-if="newAssetType === 'fund'">基金代码</label>
-          <input v-if="newAssetType === 'fund'" type="text" v-model="newCode" maxlength="20" placeholder="如 050025 或 QQQ" @keyup.enter="addFund" />
+          <label v-if="newAssetType === 'fund' || newAssetType === 'gold'">{{ newAssetType === 'gold' ? '账户代码' : '基金代码' }}</label>
+          <input
+            v-if="newAssetType === 'fund' || newAssetType === 'gold'"
+            type="text"
+            v-model="newCode"
+            maxlength="20"
+            :placeholder="newAssetType === 'gold' ? '留空默认 AU9999' : '如 050025 或 QQQ'"
+            @keyup.enter="addFund"
+          />
         </div>
         <div class="bz-form-row">
           <label>标的类型</label>
@@ -306,8 +417,14 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
         </div>
         <div class="bz-form-row">
           <label>{{ newAssetType === 'fund' ? '名称（可留空自动查询）' : '名称' }}</label>
-          <input type="text" v-model="newName" class="wide" :placeholder="newAssetType === 'fund' ? '' : '如：我的公积金、204007 逆回购'" />
+          <input type="text" v-model="newName" class="wide" :placeholder="newAssetType === 'fund' ? '' : newAssetType === 'gold' ? '如：广发积存金（留空默认「黄金积存」）' : '如：我的公积金、204007 逆回购'" />
         </div>
+        <div v-if="newAssetType === 'gold'" class="bz-form-row">
+          <label>点差（元/克）</label>
+          <input type="number" v-model.number="newGoldOffset" step="0.01" />
+          <span class="bz-hint">账户报价 = 上金所 Au99.99 + 点差</span>
+        </div>
+        <div v-if="newAssetType === 'gold' && goldMarketError" class="bz-hint">{{ goldMarketError }}</div>
         <details v-if="newAssetType === 'fund'" class="adv">
           <summary>费率档案（可选，按百分比填写）</summary>
           <div class="bz-form-row">
@@ -365,7 +482,7 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
         </div>
         <div class="bz-form-row">
           <label>日期</label>
-          <input type="date" v-model="tx.date" @change="lookupNav" />
+          <input type="date" v-model="tx.date" @change="onDateChange" />
         </div>
         <template v-if="isReverseRepo">
           <div class="bz-form-row">
@@ -408,9 +525,10 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
           <span v-if="tx.type === 'buy' || tx.type === 'dividend_reinvest'" class="bz-hint">含手续费</span>
         </div>
         <div v-if="!isSimpleBalance && !isReverseRepo" class="bz-form-row">
-          <label>{{ isTreasuryBond ? '成交价格（元/100元面值）' : selectedFund?.asset_type ? '成交价格（元/份）' : selectedFund?.market === 'US_ETF' ? '成交价格（USD/股）' : selectedFund?.market === 'CN_ETF' ? '成交价格（元/份）' : '成交净值' }}</label>
-          <input type="number" v-model.number="tx.nav" step="0.0001" min="0" @change="lookupNav" />
-          <button v-if="!isManualAsset" style="padding: 1px 6px" :disabled="looking" @click="lookupNav">回查</button>
+          <label>{{ isTreasuryBond ? '成交价格（元/100元面值）' : isGold ? '成交价（元/克）' : selectedFund?.asset_type ? '成交价格（元/份）' : selectedFund?.market === 'US_ETF' ? '成交价格（USD/股）' : selectedFund?.market === 'CN_ETF' ? '成交价格（元/份）' : '成交净值' }}</label>
+          <input type="number" v-model.number="tx.nav" :step="isGold ? 0.01 : 0.0001" min="0" @change="onPriceEdited" />
+          <button v-if="!isManualAsset" style="padding: 1px 6px" :disabled="looking" @click="requery">{{ isGold ? '取现价' : '回查' }}</button>
+          <span v-if="isGold" class="bz-hint">可手填，补录历史成交</span>
         </div>
         <div v-if="selectedFund?.currency === 'USD'" class="bz-form-row">
           <label>成交汇率（CNY/USD）</label>
@@ -422,7 +540,7 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
           {{ navHint.source }}<template v-if="navHint.nav">：{{ navHint.nav }}</template>
         </div>
         <div v-if="!isSimpleBalance" class="bz-form-row">
-          <label>{{ isTreasuryBond ? '面值份额' : isReverseRepo ? '出借本金份额' : '份额（可留空自动算）' }}</label>
+          <label>{{ isTreasuryBond ? '面值份额' : isReverseRepo ? '出借本金份额' : isGold ? '克数（可留空自动算）' : '份额（可留空自动算）' }}</label>
           <input type="number" v-model.number="tx.shares" min="0" />
         </div>
         <div v-if="!isSimpleBalance && !isReverseRepo && !isTreasuryBond" class="bz-form-row">
@@ -436,7 +554,7 @@ const typeClass = (t) => (t === 'sell' ? 'neg' : t === 'buy' ? 'pos' : '')
           预估利息 {{ fmtMoney(reverseRepoPreview.interest) }} 元，税 {{ fmtMoney(reverseRepoPreview.tax) }} 元，
           税后佣金后净收益 {{ fmtMoney(reverseRepoPreview.net) }} 元
         </div>
-        <div v-if="tx.type === 'buy' && !isManualAsset" class="bz-form-row">
+        <div v-if="tx.type === 'buy' && !isManualAsset && !isGold" class="bz-form-row">
           <label>买入时溢价率 %</label>
           <input type="text" placeholder="查不到可留空" :value="tx.premium_rate === '' ? '' : toPctInput(tx.premium_rate)"
             @change="tx.premium_rate = $event.target.value.trim() === '' ? '' : fromPctInput($event.target.value)" />
