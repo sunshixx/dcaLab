@@ -13,7 +13,7 @@
     "dev": "concurrently -n api,web -c yellow,cyan \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
     "test": "npm --prefix backend test",
     "mobile": "npm --prefix frontend run build && node scripts/serve-mobile.mjs",
-    "mobile:https": "node scripts/make-cert.mjs && npm run mobile"
+    "mobile:https": "node scripts/make-ca.mjs && npm run mobile"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

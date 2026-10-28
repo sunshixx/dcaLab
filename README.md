@@ -91,16 +91,25 @@ ipconfig getifaddr en0   # macOS 查本机 IP
 
 ### 方式二：HTTPS 安装（Android 上拿到完整 PWA）
 
-浏览器只允许在 HTTPS（或 localhost）下注册 Service Worker，手机通过局域网 IP 访问是 HTTP，所以要用自签证书：
+浏览器只允许在 HTTPS（或 localhost）下注册 Service Worker，手机用局域网 IP 访问是 HTTP，所以要走 HTTPS：
 
 ```bash
-npm run mobile:https     # 生成证书 → 构建 → 起预览服务
+npm run mobile:https     # 生成本地 CA + 服务器证书 → 构建 → 起服务
 ```
 
-手机访问 `https://<电脑IP>:4173`，证书警告点“继续访问”（自签证书，只在本机用）。
-之后 Chrome 会提示“安装应用”，桌面上出现图标：全屏启动、断网也能打开界面（数据仍实时从电脑取）。
+**证书只装一次，之后不会再弹“仍然前往”**。脚本会在 `4180` 端口开一个纯 HTTP 的小页面专门发证书：
 
-> 证书在 `frontend/.cert/`（已 gitignore），只在 `npm run mobile` 的 preview 服务启用；`npm run dev` 的开发服务器仍是 HTTP，桌面端完全不受影响。
+| 设备 | 步骤 |
+|---|---|
+| **iOS** | 打开 `http://<电脑IP>:4180/` → 装描述文件 → 设置 → 通用 → 关于本机 → **证书信任设置** → 打开 `DCA-Lab Local CA` 开关 |
+| **Android** | 打开 `http://<电脑IP>:4180/` → 下载 `ca.crt` → 设置 → 安全 → 加密与凭据 → 安装证书 → **CA 证书** → 选中下载的文件 |
+
+装完后打开 `https://<电脑IP>:4173`，地址栏不再报警告，Chrome 会提示“安装应用”。
+
+原理：不是“自签名证书”（那种每台设备都不认、每次都要点继续），而是本地 CA 签发服务器证书；设备信任这个 CA 之后，同一 CA 签的证书都会被认可。
+
+> 证书文件都在 `frontend/.cert/`（已 gitignore）：`ca.crt` 根证书、`ca.mobileconfig` iOS 描述文件、`cert.pem` 服务器证书（含链）。只在 `npm run mobile` 的 preview 生效，`npm run dev` 仍是 HTTP，桌面端不受影响。
+> CA 有效期 10 年、服务器证书 825 天；服务器证书到期后重跑 `npm run mobile:https` 即可续签，CA 不用重装。
 
 ### 说明
 
